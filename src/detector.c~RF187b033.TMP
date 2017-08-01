@@ -1,0 +1,3919 @@
+/************************************************************
+ * Copyright (C), 2009-2011, Donjin Tech. Co., Ltd.
+ * FileName:		// 文件名
+ * Author:			// 作者
+ * Date:			// 日期
+ * Description:		// 模块描述
+ * Version:			// 版本信息
+ * Function List:	// 主要函数及其功能
+ *     1. -------
+ * History:			// 历史修改记录
+ *     <author>  <time>   <version >   <desc>
+ *     David    96/10/12     1.0     build this moudle
+ ***********************************************************/
+#include "detector.h"
+#include "timer.h"
+#include "delay.h"
+#include "usart.h"
+#include "Crc16.h"
+#include "jq6500.h"
+#include "KEY_LED.h"
+#include "tick.h"
+#include "string.h"
+#include "wifi.h"
+#include "Rtc.h"
+
+
+#define   dev_typ_cnt   6  
+#define   N	        5
+#define   M	       21
+uint8					Receive[N];         //FOR 433 STUDY
+char					rec[N][8];          //自学习地址、数据存储
+uint16					rel[N][8];
+uint8					have_body  = 1;
+uint16					LOW_T	   = 0x30;  //440us   低电平时长
+uint16					SYNO_T	   = 0x4a5; //10.7ms  同步头时长
+uint16					FIRST_LT   = 0x182;
+uint16					HIGH_T	   = 0x90;  //1.3ms   高电平时长
+
+
+extern u8				keyflag;            //按键标志
+
+u8						first_bf = 1;
+
+extern char				addr[35];
+extern u16				port;
+
+extern char				*SSID;
+extern char				*PassWord;
+
+
+extern KeyMenu_TypeDef	Kmenu;          //按键菜单
+
+u8 copyi;
+u8 copyj;
+u32						send_time = 0;  //数据发送标志
+u32						net_send_timer = 0;
+
+u8 flash_data[1024];
+
+#define ABS16( A, B ) ( ( A > B ) ? ( A - B ) : ( B - A ) )
+
+
+STOR_433_DATA	StudyDat;
+SEND_433_DATA   SendDat;
+
+DEVICE_INFO		Deviceinfo;
+
+Alarm_Flags		AlarmFlags;
+BOOL			FlagFirstRun;
+
+
+//初始化函数
+//PB6 433_TXOUT 433发射 输出
+//PB7 433_RXIN  433接收 输入
+//PC0 BAT_DET   电池检测 模拟输入 adc
+//PC1 IR_IN     红外输入 输入
+//PC2 MV_IN     微波输入 输入
+//PA11 TRIG     输出10us高电平，开始测距  输出
+//PA12 echo     输入高电平，测距         输入
+//距离=echo 高电平时间*340m/s / 2
+
+void Detector_Init( void )
+{
+	//ADC_InitTypeDef		ADC_InitStructure;
+	GPIO_InitTypeDef	GPIO_InitStructure;
+	//EXTI_InitTypeDef EXTI_InitStructure;
+	//NVIC_InitTypeDef NVIC_InitStructure;
+
+	RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOB , ENABLE ); //使能PORTA,PORTB,PORTC时钟
+
+
+	//433输出管脚
+	GPIO_InitStructure.GPIO_Pin	   = GPIO_Pin_6;                                                                                //PB6
+	GPIO_InitStructure.GPIO_Mode   = GPIO_Mode_Out_PP;   
+        //设置成推挽输出
+        GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init( GPIOB, &GPIO_InitStructure );
+
+	//433输入管脚
+	GPIO_InitStructure.GPIO_Pin	   = GPIO_Pin_7;                                                                                //PB7
+	GPIO_InitStructure.GPIO_Mode   = GPIO_Mode_IPU;                                                                             //设置成上拉输入
+	GPIO_Init( GPIOB, &GPIO_InitStructure );
+
+}
+
+
+void Delay(uint16_t time)
+{      
+       TIM3->CNT = 0;
+	   TIM3->CR1|=0x01;    //使能定时器3
+	   while(TIM3->CNT!=time);
+	   TIM3->CR1|=0x00;    //关闭定时器3
+	   TIM3->CNT = 0;
+	   
+}
+
+void C_Sys_out(u16 SYNO)
+{
+
+DATA_HIGH;
+Delay(84);
+DATA_LOW;
+Delay(SYNO);
+}
+
+void Sys_out(u16 SYNO)
+{
+
+DATA_HIGH;
+if(SYNO<800)
+Delay(SYNO>>4);
+else
+Delay(SYNO/25);
+DATA_LOW;
+Delay(SYNO);
+}
+void Data_out(u8 LOW,u8 HIGH)
+{
+	DATA_HIGH;
+	Delay(531);//4.8ms
+	DATA_LOW;
+	Delay(166);//1.5ms
+	DATA_HIGH;
+	Delay(LOW);
+	DATA_LOW;
+	Delay(HIGH);
+
+
+
+}
+
+void Data0_out(u16 First_LT,u8 LOW,u8 HIGH)
+{
+if((First_LT&0x3FF)== 0)
+{
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+Delay(HIGH);
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+Delay(HIGH);
+}
+else
+{
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(First_LT&0x3FF);
+else	  Delay(HIGH);
+
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(HIGH);
+else  Delay(First_LT&0x3FF);
+
+
+
+}
+}
+void Data1_out(u16 First_LT,u8 LOW,u8 HIGH)
+{
+if((First_LT&0x3FF)== 0)
+{
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+Delay(LOW);
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+Delay(LOW);
+}
+else
+{
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(First_LT&0x3FF);
+else Delay(LOW);
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(LOW);
+else Delay(First_LT&0x3FF);
+}
+}
+
+void DataF_out(u16 First_LT,u8 LOW,u8 HIGH)
+{
+if((First_LT&0x3FF)== 0)
+{
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+Delay(HIGH);
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+Delay(LOW);
+}
+else
+{
+
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(First_LT&0x3FF);
+else Delay(HIGH);
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(LOW);
+else Delay(First_LT&0x3FF);
+}
+}
+void Non_out(u16 First_LT,u8 LOW,u8 HIGH)
+{
+if((First_LT&0x3FF)== 0)
+{
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+Delay(LOW);
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+Delay(HIGH);
+}
+else
+{
+
+DATA_HIGH;
+Delay(HIGH);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(First_LT&0x3FF);
+else Delay(LOW);
+DATA_HIGH;
+Delay(LOW);
+DATA_LOW;
+if((((uint8_t)((First_LT&0x1C00)>>10)-1)%2)==0) Delay(HIGH);
+else Delay(First_LT&0x3FF);
+}
+}
+
+//输出 模拟波形发出
+void cl_out(u8 * pdata,u16 SYNO, u16 First_LT,u8 LOW, u8 HIGH)
+{
+  uint8_t i,j,m;
+  uint8_t *p;
+  uint8_t temp;
+ // SYNO = 984;
+ // LOW=0x2C;
+//  HIGH=0X54;
+ 
+  //z=First_LT&0x03FF;//低电平时间长度
+ 
+ for(m=0;m<5;m++)//连续发射5个波形
+ {
+  p =pdata;
+  temp =*p;
+ // delay_ms(50);
+  C_Sys_out(SYNO);
+for(i=0;i<N;i++)//N个字
+ {
+ for(j=0;j<4;j++)//一个字
+   {
+
+	if((i==0)&&(j==0)){
+			 Data_out(LOW,HIGH);
+    temp <<=2;
+	j++;
+        }
+    switch(temp&0xc0)
+         {
+         
+          case 0x00 :
+ 
+       
+                   Data1_out(0,LOW,HIGH);
+          
+                   break;
+          case 0x40:
+                   Non_out(0,LOW,HIGH);
+                   break;
+          case 0x80:
+                   DataF_out(0,LOW,HIGH);
+                   break;
+          case 0xc0:
+                   Data0_out(0,LOW,HIGH);
+                   break;
+          default: break;
+        }
+    temp <<=2;
+        }
+  p++;
+    temp =*p;
+    }
+   
+ 
+   
+ }//end 多个波形
+}//fashe_out
+  
+
+
+//输出 模拟波形发出
+void fashe_out(u8 * pdata,u16 SYNO, u16 First_LT,u8 LOW, u8 HIGH,u8 times)
+{
+  uint8_t i,j,m;
+  uint8_t *p;
+  uint8_t temp;
+  uint8_t x,y;
+  //u16 z;
+  x=(uint8_t)((First_LT&0xE000)>>13);//宽低电平字节位置
+  y=(uint8_t)((First_LT&0x1C00)>>10);//宽低电平位 位置
+  //z=First_LT&0x03FF;//低电平时间长度
+  
+ for(m=0;m<times;m++)//连续发射5个波形
+ {
+  p =pdata;
+  temp =*p;
+ // delay_ms(50);
+  Sys_out(SYNO);
+
+  if(First_LT == 0)//无需添加宽低电平
+  {
+
+for(i=0;i<N;i++)//N个字
+ {
+ for(j=0;j<4;j++)//一个字
+   {
+		//if((i==3)&&(temp==0)&&(*(p+1)==0))
+     if((i==3)&&(*(p+1)==0))
+		{
+		  
+		  i=5;
+		  j=4;
+		  break;
+		  
+		}
+    switch(temp&0xc0)
+         {
+          case 0x00 :
+          /*  if((type==1)&&(i==0)&&(j==0)){
+            
+            }else*/
+           // {
+                   Data1_out(0,LOW,HIGH);
+           // }
+                   break;
+          case 0x40:
+                   Non_out(0,LOW,HIGH);
+                   break;
+          case 0x80:
+                   DataF_out(0,LOW,HIGH);
+                   break;
+          case 0xc0:
+                   Data0_out(0,LOW,HIGH);
+                   break;
+          default: break;
+        }
+    temp <<=2;
+    }
+    p++;
+    temp =*p;
+
+   }
+
+  }
+else//需要添加宽低电平
+{
+
+for(i=0;i<N;i++)//三个字
+ {
+ for(j=0;j<4;j++)//一个字
+   {
+		/*if((i>2)&&(*p==0)&&((temp&0xff) ==0))//丢弃多余的零
+		{
+		  
+		  i=5;
+		  j=4;
+		  break;
+		  
+		}*/
+
+	if(i == x)//查找到是第几个字节需要加宽低电平
+	{
+	if(j != y/2)//找到发射宽低电平位置
+		{
+		    switch(temp&0xc0)
+		         {
+		          case 0x00 :
+		                   Data1_out(0,LOW,HIGH);
+		                   break;
+		          case 0x40:
+		                   Non_out(0,LOW,HIGH);
+		                   break;
+		          case 0x80:
+		                   DataF_out(0,LOW,HIGH);
+		                   break;
+		          case 0xc0:
+		                   Data0_out(0,LOW,HIGH);
+		                   break;
+		          default: break;
+		        }
+		}
+	else//找到位置了
+		{
+		    switch(temp&0xc0)
+		         {
+		          case 0x00 :
+		                   Data1_out(First_LT,LOW,HIGH);
+		                   break;
+		          case 0x40:
+		                   Non_out(First_LT,LOW,HIGH);
+		                   break;
+		          case 0x80:
+		                   DataF_out(First_LT,LOW,HIGH);
+		                   break;
+		          case 0xc0:
+		                   Data0_out(First_LT,LOW,HIGH);
+		                   break;
+		          default: break;
+		        }
+	      }
+	}
+     else
+      {
+       switch(temp&0xc0)
+          {
+          case 0x00 :
+                   Data1_out(0,LOW,HIGH);
+                   break;
+          case 0x40:
+                   Non_out(0,LOW,HIGH);
+                   break;
+          case 0x80:
+                   DataF_out(0,LOW,HIGH);
+                   break;
+          case 0xc0:
+                   Data0_out(0,LOW,HIGH);
+                   break;
+          default: break;
+          }
+        }
+        temp <<=2;
+      }//结束单个字发射
+      p++;
+      temp =*p;
+     }
+   }//end增加宽低电平发射
+ }//end 多个波形
+}//fashe_out
+  
+
+			
+void Jiema( uint8 leixing )
+{
+	u8			i  = 0;
+	u8			j  = 0;
+	//u16  temp = 0x0000;
+	u16			temp_l;         //用于判断波形高低电平时长
+	u8			k		   = 0;
+	u8			m		   = 0;
+	u8			PulseCnt   = 0; //丢弃第一次的同步头
+	static u32	jiema_time = 0;
+	u16			timer3	   = 0;
+	for( i = 0; i < N; i++ )
+	{
+		Receive[i] = 0x00;
+	}
+	while( 1 )
+	{
+		jiema_time = TickGet( );
+		TIM4->CNT  = 0;
+		while( ( CSIO_DATA ) != 0 ) //等待低电平(需要一个等待超时，防止该管脚一直高电平，无法退出)
+		{
+			if( TickGet( ) - jiema_time > 1000 )
+			{
+				LED3_ON;            //检查315接收模块是否损坏
+				return;
+			}
+		}
+
+		TIM4->CR1 = 0x01;           //开定时器
+		while( ( CSIO_DATA ) == 0 ) //等待高电平
+		{
+			if( TickGet( ) - jiema_time > 1000 )
+			{
+				LED3_ON;            //检查315接收模块是否损坏
+				return;
+			}
+		}
+
+		//temp= TIM4->CNT ;
+		SYNO_T	   = TIM4->CNT;
+		TIM4->CR1  = 0x00;          //关定时器
+		TIM4->CNT  = 0;             //计数清零
+		TIM3->CR1  = 0x01;          //开启定时器
+		k++;                        //一定次数判断，跳出JIEMA函数，防止死循环
+		if( SYNO_T < 800 )
+		{
+			temp_l = SYNO_T >> 4;
+		} else
+		{
+			temp_l = SYNO_T >> 5;
+		}
+		//SYNO_T = temp;//同步头时长，用于模拟波形发送
+		//temp = 0;
+		//  if( ( 0x20b< temp ) && ( temp < 0x3F0) )//取2.9ms----21.87ms同步头
+		if( ( 0x200 < SYNO_T ) && ( SYNO_T < 0x5F0 ) )  //取2.9ms----21.87ms同步头
+		{
+			// UART4_printf("temp=%d \r\n",temp);
+			PulseCnt++;
+			m++;                                        //防止干扰，一直死循环，让其跳出循环，继续下一次检测
+			if( PulseCnt != 1 )                         //第一次检测到同步码，丢弃
+			{
+				TIM3->CR1 = 0x00;                       //关闭定时器
+				continue;
+			}
+			for( j = 0; j < N; j++ )                    //循环4次
+			{
+				for( i = 0; i < 8; i++ )
+				{
+					while( ( CSIO_DATA ) == 0 )         //等待高电平
+					{
+						if( TickGet( ) - jiema_time > 1000 )
+						{
+							LED3_ON;
+							//检查315接收模块是否损坏
+							return;
+						}
+					}
+					TIM4->CR1  = 0x01;          //开启定时器
+					rel[j][i]  = TIM3->CNT;
+
+					TIM3->CR1  = 0x00;          //关闭定时器
+					TIM3->CNT  = 0;
+					if( rel[j][i] > ( SYNO_T - 100 ) )
+					{
+						if( j < 3 )
+						{
+							TIM3->CR1  = 0x00;  //关闭定时器
+							TIM4->CR1  = 0x00;  //关闭定时器
+							TIM3->CNT  = 0;
+							TIM4->CNT  = 0;
+							return;
+						}else
+						{
+							i  = 8;
+							j  = N;
+							break;
+						}
+					}
+					while( ( CSIO_DATA ) != 0 )                                                             //等待低电平
+					{
+						if( TickGet( ) - jiema_time > 1000 )
+						{
+							LED3_ON;                                                                        //检查315接收模块是否损坏
+							return;
+						}
+					}
+
+					TIM3->CR1  = 0x01;                                                                      //开启定时器
+					rec[j][i]  = TIM4->CNT;
+					// UART4_printf("t(%d,%d)=%d \r\n",j,i,timer4);
+					TIM4->CR1  = 0x00;                                                                      //关闭定时器
+					TIM4->CNT  = 0;
+				}
+			}
+			for( j = 0; j < N; j++ )                                                                        //循环4次
+			{
+				for( i = 0; i < 8; i++ )
+				{
+					//UART4_printf("%d%d=%d\r\n",j,i,rec[j][i]);
+					Receive[j] = Receive[j] << 1;                                                           //存下所有地址和数据
+					if( ( ( temp_l / 3 ) < rec[j][i] ) && ( rec[j][i] < ( temp_l * 7 / 3 ) ) )              //判断窄脉冲
+					{
+						LOW_T	   = rec[j][i];                                                             //窄脉冲时间长度
+						Receive[j] = Receive[j] + 0x01;
+					}else if( ( ( temp_l * 8 / 3 ) < rec[j][i] ) && ( rec[j][i] < ( temp_l * 13 / 3 ) ) )   //宽脉冲
+
+					{
+						HIGH_T	   = rec[j][i];                                                             //宽脉冲时间长度
+						Receive[j] = Receive[j] + 0x00;                                                     //<< 1 ;
+					}
+					if( ( rel[j][i] > ( HIGH_T + 0x50 ) ) && ( j < 3 ) )
+					{
+						timer3	   = rel[j][i];
+						FIRST_LT   = timer3 | ( j << 13 ) | ( i << 10 );
+					}else if( ( j > 2 ) && ( timer3 == 0 ) )
+					{
+						FIRST_LT = 0;
+					}
+
+					// if((i==0)&&(j==0))
+					//		 {
+					//               FIRST_LT = timer3;
+					//		 }
+					rec[j][i]  = 0;
+					rel[j][i]  = 0;
+				}
+			}
+			//UART4_printf("R=0x%x %x %x %x %x %d\r\n",Receive[0],Receive[1],Receive[2],Receive[3],Receive[4],SYNO_T);
+			// UART4_printf("R=0x%x %x %x %x %x\r\n",Receive[0],Receive[1],Receive[2],Receive[3],Receive[4]);
+			return;
+		}else
+		{
+			switch( leixing )
+			{
+				case changgui:
+
+					if( ( k > 40 ) || ( m > 10 ) )
+					{
+						return;
+					}
+
+				case study:
+					// if((k>250)||(m>20))
+					if( ( k > 100 ) || ( m > 20 ) )
+
+					{
+						return;
+					}
+
+				default:
+					;
+			} /**/
+			TIM3->CR1 = 0x00; //关闭定时器
+		}
+	}
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Study_Remote( void ) //遥控器
+{
+	UART4_printf( "语音播报:学习遥控器" );
+	Specify_musi_play( 0x02 );  //学习遥控器
+	Study( remote );
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Study_Menci( void )        //门磁
+{
+	UART4_printf( "语音播报:学习门磁" );
+	Specify_musi_play( 0x03 );  //学习门磁窗磁
+	Study( Menci );
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Study_Infrared( void )     //红外
+{
+	UART4_printf( "语音播报:学习红外控制器" );
+	Specify_musi_play( 0x04 );  //学习红外窗幕
+	Study( Infrared );
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Study_Smoke( void )        //其它
+{
+	UART4_printf( "语音播报:学习其它设备" );
+	Specify_musi_play( 0x05 );  //学习其它设备
+	Study( smoke );
+}
+void Study_Gas( void )        //其它
+{
+	UART4_printf( "语音播报:学习其它设备" );
+	Specify_musi_play( 0x05 );  //学习其它设备
+	Study( gas );
+}
+
+
+//u32				study_time	   = 0;
+//uint8			k1 = 0;
+//u8				Already_Study = 0;
+
+//-------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------
+
+/*
+void check_433_data(u8 sensor){
+
+     u8 i,j;
+     u8 temp[20];
+	  STOR_433_DATA	*pStudyStorDat;
+
+   pStudyStorDat = &StudyDat;
+  Load433StudyDat( pStudyStorDat );
+
+  
+		 
+
+		for( i = ( NODE_CNT /dev_typ_cnt *(sensor-1)); i < ( NODE_CNT /dev_typ_cnt * sensor); i++ )
+		{
+					copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt *sensor) )
+								{
+								
+								if(sensor==remote){
+									for( j = 0; j < 4; j++ )
+									{
+										copyj = j;
+										if( ( pStudyStorDat->addr_data_433[i].data_433[j][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[j][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[j][2] == Receive[4] ) )
+										{
+											UART4_printf( "语音提示:遥控器已经学习!" );
+											Specify_Musi_Play( 8 );             //已经学习
+											i			   = NODE_CNT;          //跳出查找
+											Already_Study  = 1;
+											study_time	   = TickGet( );        //时间重新更新
+											k1			   = 0;
+											                                    //return;
+											break;
+										}
+                                                                                else if( ( ( pStudyStorDat->addr_data_433[i].data_433[j][0] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][0] == 0xff ) ) && ( ( pStudyStorDat->addr_data_433[i].data_433[j][1] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][1] == 0xff ) ) && ( ( pStudyStorDat->addr_data_433[i].data_433[j][2] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][2] == 0xff ) ) )
+										{
+											UART4_printf( "语音提示:遥控器学习另外一个按键值!" );
+											Specify_Musi_Play( 0x06 );          //学习成功
+											pStudyStorDat->addr_data_433[i].data_433[j][0] = Receive[2];
+											pStudyStorDat->addr_data_433[i].data_433[j][1] = Receive[3];
+											pStudyStorDat->addr_data_433[i].data_433[j][2] = Receive[4];
+											Save433StudyDat( pStudyStorDat );   //存储遥控器的另外键值
+											i			   = NODE_CNT;          //跳出查找
+											study_time	   = TickGet( );        //时间重新更新
+											k1			   = 0;
+											Already_Study  = 1;
+											  
+                                                                  TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0); 
+                                                                
+                                                                
+                                                                     handly_get_value(2,10);                   
+                                                                                        //return;
+											break;
+										}
+									}
+									}
+								
+								  else if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+										Specify_Musi_Play( 8 );                                                                                                     //已经学习
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                                
+                                                                  TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+										  
+                                                                                //return;
+										break;
+									}
+								}
+								else //已经学习到其它传感器区
+								{
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+									Specify_Musi_Play( 26 );                                                                                                        //已经学习到遥控器
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+                                                                }
+                                                               if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT /dev_typ_cnt * 2 ) )
+                                                               {
+									
+										UART4_printf( "语音提示:已经学习到门磁!" );
+										Specify_Musi_Play( 24 );        //已经学习到门磁
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+								}
+								   else if( ( NODE_CNT / dev_typ_cnt *2  <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3  ))
+									{
+										UART4_printf( "语音提示:已经学习到红外窗幕!" );
+										Specify_Musi_Play( 23 );        //已经学习到红外窗幕
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+                                                                   else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT/dev_typ_cnt * 4 ) )
+									{
+										UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+										Specify_Musi_Play( 25 );        //已经学习到其它传感器
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+                                                                else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) &&(i<( NODE_CNT / dev_typ_cnt * 5)) )
+									{
+										UART4_printf( "语音提示:已经学习到燃气传感器!" );
+										Specify_Musi_Play( 39 );        //已经学习到其它传感器
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+                                                                else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) &&(i<NODE_CNT ) )
+									{
+										UART4_printf( "语音提示:已经学习到紧急按钮!" );
+										Specify_Musi_Play( 38 );        //已经学习到其它传感器
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+								}
+							}
+						}
+
+}
+
+*/
+/*
+void save_433_data_fun(u8 sensor){
+  
+u8 i;
+u8 temp[20];
+   STOR_433_DATA	*pStudyStorDat;
+
+   pStudyStorDat = &StudyDat;
+  Load433StudyDat( pStudyStorDat );
+  
+        for( i = ( NODE_CNT /dev_typ_cnt *(sensor-1)); i < ( NODE_CNT /dev_typ_cnt*sensor); i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = sensor;
+								pStudyStorDat->addr_data_433[i].Area		   = i + 1; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "remote存储成功!" );
+                                                                
+                                                                TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                   memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0); 
+                                                            
+								Specify_Musi_Play( 0x06 );                              //学习成功
+								study_time	           = TickGet( );                            //时间重新更新
+								Already_Study  = 1;
+								k1			    = 0;
+								                                                        //return;
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT / (6*sensor)- 1 ) )
+								{
+									UART4_printf( "remote已经超过%d个，请铲除后再学习!", ( NODE_CNT / 6 ) );
+									Specify_Musi_Play( 10 );                            //存储区满，请删除后再次学习
+								}
+							}
+						}
+  
+  
+  
+}
+
+
+*/
+/*
+
+void Study( u8 sensor )
+{
+	
+	static u8		k2 = 0;
+	//char szTmp[100];
+	uint8			DataTemp[2 * N]; //用于学习两次jiama()值，对比，一致才学习成功。
+	uint8			i, j;
+	
+	u32				key_delay_time = 0;
+	STOR_433_DATA	*pStudyStorDat;
+	uint8			StudyCntAddr;
+	
+	Already_Study=0;
+
+	pStudyStorDat = &StudyDat;
+
+	study_time	   = TickGet( );
+	key_delay_time = TickGet( );
+
+	//UART4_printf("kdt1=%d!\r\n",TickGet());
+	while( ( TickGet( ) > ( study_time + 8000 ) ) ? 0 : 1 ) //8秒超时退出
+	{
+		if( ( TickGet( ) - key_delay_time ) > 500 )
+		{
+			key_delay_time = TickGet( );
+			if( keyflag == K_SET )                          //按键用于退出当前学习，进入下一级
+			{
+				//keyflag=K_CLR;
+				k2++;
+				//UART4_printf("k2=%d,kdt=%d!\r\n",k2,TickGet());
+				return;
+			}
+		}
+		if( k1 > 240 )
+		{
+			//UART4_printf("学习失败!\r\n");
+			//Specify_Musi_Play(0x07);//失败
+			Kmenu.Layer = 0; //再次按键，从遥控器开始学习
+			//return;
+			break;
+		}
+		k1++;
+
+		Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i] = Receive[i];
+		}
+
+		delay_ms( 20 );
+		Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i + N] = Receive[i];
+		}
+
+		if( Already_Study == 1 )
+		{
+			Already_Study = 0;
+		}
+		if( ( DataTemp[0] != 0x00 ) && ( DataTemp[1] != 0x00 ) && ( DataTemp[2] != 0x00 ) && ( DataTemp[N] != 0x00 ) && ( DataTemp[N + 1] != 0x00 ) && ( DataTemp[N + 2] != 0x00 ) )
+		{
+			
+			if( ( DataTemp[0] == DataTemp[N] ) && ( DataTemp[1] == DataTemp[N + 1] ) && ( DataTemp[2] == DataTemp[N + 2] ) && ( DataTemp[3] == DataTemp[N + 3] ) && ( DataTemp[4] == DataTemp[N + 4] ) )
+			{                       //两次学习结果相同，学习成功
+				UART4_printf( "R=0x%x %x %x %x %x\r\n", Receive[0], Receive[1], Receive[2], Receive[3], Receive[4] );
+				check_433_data(sensor);
+				if( Already_Study == 1 )
+				{
+				//break;	
+                                  continue;
+				}
+				//新设备学习
+				if( StudyCntAddr == NODE_CNT )
+				{
+					UART4_printf( "语音提示:已经达到学习30个设备最大值，无法学习!" );
+					Specify_Musi_Play( 10 ); //存储区满，请删除后再次学习
+					return;
+				}
+				save_433_data_fun(sensor);
+			delay_ms(500);
+			}
+		}
+	}
+	
+	UART4_printf( "自学习超时，退出!" );
+	Specify_Musi_Play( 0x09 ); //退出学习
+	keyflag = K_CLR;
+	Kmenu.Layer = 0;
+}
+*/
+
+void Study( u8 sensor )
+{
+	uint8			k1 = 0;
+	static u8		k2 = 0;
+        u8 temp[30];
+	//char szTmp[100];
+	uint8			DataTemp[2 * N]; //用于学习两次jiama()值，对比，一致才学习成功。
+	uint8			i, j;
+	u32				study_time	   = 0;
+	u32				key_delay_time = 0;
+	STOR_433_DATA	*pStudyStorDat;
+	uint8			StudyCntAddr;
+	u8				Already_Study = 0;
+
+	pStudyStorDat = &StudyDat;
+
+	study_time	   = TickGet( );
+	key_delay_time = TickGet( );
+
+	//UART4_printf("kdt1=%d!\r\n",TickGet());
+	while( ( TickGet( ) > ( study_time + 8000 ) ) ? 0 : 1 ) //8秒超时退出
+	{
+		if( ( TickGet( ) - key_delay_time ) > 500 )
+		{
+			key_delay_time = TickGet( );
+			if( keyflag == K_SET )                          //按键用于退出当前学习，进入下一级
+			{
+				//keyflag=K_CLR;
+				k2++;
+				//UART4_printf("k2=%d,kdt=%d!\r\n",k2,TickGet());
+				return;
+			}
+		}
+		/* 
+                if( k1 > 540 )
+		{
+			//UART4_printf("学习失败!\r\n");
+			//Specify_Musi_Play(0x07);//失败
+			Kmenu.Layer = 0; //再次按键，从遥控器开始学习
+			//return;
+			break;
+		}
+		k1++;
+             */
+		Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i] = Receive[i];
+		}
+
+		delay_ms( 20 );
+		Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i + N] = Receive[i];
+		}
+
+		if( Already_Study == 1 )
+		{
+			Already_Study = 0;
+		}
+		if( ( DataTemp[0] != 0x00 ) && ( DataTemp[1] != 0x00 ) && ( DataTemp[2] != 0x00 ) && ( DataTemp[N] != 0x00 ) && ( DataTemp[N + 1] != 0x00 ) && ( DataTemp[N + 2] != 0x00 ) )
+		{
+			//UART4_printf("DataTemp[0]=0x%x 0x%x 0x%x\r\n",DataTemp[0],DataTemp[1],DataTemp[2]);
+			// UART4_printf("DataTemp[3]=0x%x 0x%x 0x%x\r\n",DataTemp[3],DataTemp[4],DataTemp[5]);
+			if( ( DataTemp[0] == DataTemp[N] ) && ( DataTemp[1] == DataTemp[N + 1] ) && ( DataTemp[2] == DataTemp[N + 2] ) && ( DataTemp[3] == DataTemp[N + 3] ) && ( DataTemp[4] == DataTemp[N + 4] ) )
+			{                       //两次学习结果相同，学习成功
+				UART4_printf( "R=0x%x %x %x %x %x\r\n", Receive[0], Receive[1], Receive[2], Receive[3], Receive[4] );
+				Load433StudyDat( pStudyStorDat );
+				StudyCntAddr = pStudyStorDat->Count_433;
+				switch( sensor )    //读取存储位置,还需要判断，该设备之前有没有学习过，若学习过，覆盖原来位置
+				{
+					case remote:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									for( j = 0; j < 4; j++ )
+									{
+										copyj = j;
+										if( ( pStudyStorDat->addr_data_433[i].data_433[j][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[j][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[j][2] == Receive[4] ) )
+										{
+											UART4_printf( "语音提示:遥控器已经学习!" );
+											Specify_musi_play( 8 );             //已经学习
+                                                                                        delay_ms(1000);
+											i			   = NODE_CNT;          //跳出查找
+											Already_Study  = 1;
+											study_time	   = TickGet( );        //时间重新更新
+											k1			   = 0;
+											                                    //return;
+											break;
+										}else if( ( ( pStudyStorDat->addr_data_433[i].data_433[j][0] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][0] == 0xff ) ) && ( ( pStudyStorDat->addr_data_433[i].data_433[j][1] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][1] == 0xff ) ) && ( ( pStudyStorDat->addr_data_433[i].data_433[j][2] == 0 ) || ( pStudyStorDat->addr_data_433[i].data_433[j][2] == 0xff ) ) )
+										{
+											UART4_printf( "语音提示:遥控器学习另外一个按键值!" );
+											Specify_musi_play( 0x06 );          //学习成功
+                                                                                       
+											pStudyStorDat->addr_data_433[i].data_433[j][0] = Receive[2];
+											pStudyStorDat->addr_data_433[i].data_433[j][1] = Receive[3];
+											pStudyStorDat->addr_data_433[i].data_433[j][2] = Receive[4];
+											Save433StudyDat( pStudyStorDat );   //存储遥控器的另外键值
+											i			   = NODE_CNT;          //跳出查找
+											study_time	   = TickGet( );        //时间重新更新
+										
+                                                                                        k1			   = 0;
+											Already_Study  = 1;
+                                                                                        
+                                                                                        
+                                                                                        
+                                                                  TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0); 
+                                                                 handly_get_value(1,2);
+                                                                                 delay_ms(500);        
+                                                                                        
+											                                    //return;
+											break;
+										}
+									}
+								}else //已经学习到其它传感器区
+								{
+									if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+									{
+										UART4_printf( "语音提示:已经学习到门磁!" );
+										Specify_musi_play( 23 );        //已经学习到门磁
+                                                                                 delay_ms(1000);
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}else if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+									{
+										UART4_printf( "语音提示:已经学习到红外窗幕!" );
+										Specify_musi_play( 24 );        //已经学习到红外窗幕
+                                                                                 delay_ms(1000);
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+									else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								{
+									UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+									Specify_musi_play( 25 );                                                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									UART4_printf( "语音提示:已经学习到燃气报警器!" );
+									Specify_musi_play( 40 );
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) && ( i < NODE_CNT ) )
+								{
+									UART4_printf( "语音提示:已经学习到紧急按钮!" );
+									Specify_musi_play(39);     
+                                                                                 delay_ms(1000);                   //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								}
+							}
+						}
+						break;
+
+					//门磁判断
+					case Menci:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+									Specify_musi_play( 26 );                                                                                                        //已经学习到遥控器
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+								{
+									if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+                                                                                 delay_ms(1000);
+										Specify_musi_play( 8 );                                                                                                     //已经学习
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                                
+                                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+										 handly_get_value(1,2);                                                                                                                            //return;
+										break;
+									}
+								}else
+								{
+									if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+									{
+										UART4_printf( "语音提示:已经学习到红外窗幕!" );
+										Specify_musi_play( 24 );        //已经学习到红外窗幕
+										i			   = NODE_CNT;      //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );    //时间重新更新
+										k1			   = 0;
+										                                //return;
+										break;
+									}
+									else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								   {
+									UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+									Specify_musi_play( 25 );  
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								   }
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									UART4_printf( "语音提示:已经学习到燃气报警器!" );
+									Specify_musi_play( 40 );  
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) && ( i < NODE_CNT ) )
+								{
+									UART4_printf( "语音提示:已经学习到紧急按钮!" );
+									Specify_musi_play(39);        
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								}
+							}
+						}
+						break;
+					//红外窗幕
+					case Infrared:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+									Specify_musi_play( 26 );                                                                                                        //已经学习到遥控器
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+								{
+									UART4_printf( "语音提示:已经学习到门磁!" );
+									Specify_musi_play( 23 );    
+                                                                         delay_ms(1000);
+                                                                        //已经学习到门磁
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+								{
+									if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+										Specify_musi_play( 8 );       
+                                                                                 delay_ms(1000);
+                                                                                //已经学习
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                                
+                                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+									 handly_get_value(1,2);	                                                                                                                            //return;
+										break;
+									}
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								{
+									UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+									Specify_musi_play( 25 );   
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									UART4_printf( "语音提示:已经学习到燃气报警器!" );
+					
+                                                                        Specify_musi_play( 40 ); 
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) && ( i < NODE_CNT ) )
+								{
+									UART4_printf( "语音提示:已经学习到紧急按钮!" );
+									Specify_musi_play(39); 
+                                                                         delay_ms(1000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+							}
+						}
+						break;
+					//其它传感器
+					case smoke:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+							
+                                                                        Specify_musi_play( 26 ); 
+                                                                         delay_ms(1000);
+                                                                        //已经学习到遥控器
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+								{
+									UART4_printf( "语音提示:已经学习到门磁!" );
+									Specify_musi_play( 23 );      
+                                                                        //已经学习到门磁
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+								{
+									UART4_printf( "语音提示:已经学习到红外窗幕!" );
+                                                                        
+									Specify_musi_play( 24 );    
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								{
+									if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+										Specify_musi_play( 8 );                 
+                                                                                //已经学习
+                                                                                 delay_ms(1000);
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+										                                                                                                                            //return;
+										break;
+									}
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									UART4_printf( "语音提示:已经学习到燃气报警器!" );
+									Specify_musi_play( 40 );  
+                                                                         delay_ms(2000);
+                                                                        //已经学习到红外窗幕
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) && ( i < NODE_CNT ) )
+								{
+									UART4_printf( "语音提示:已经学习到紧急按钮!" );
+									Specify_musi_play(39); 
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1500);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								
+							}
+						}
+						
+						break;
+						//其它传感器
+					case gas:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+									Specify_musi_play( 26 );                   
+                                                                        //已经学习到遥控器
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+								{
+									UART4_printf( "语音提示:已经学习到门磁!" );
+									Specify_musi_play( 23 );                 
+                                                                        //已经学习到门磁
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+								{
+									UART4_printf( "语音提示:已经学习到红外窗幕!" );
+									Specify_musi_play( 24 );    
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								{
+									UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+									Specify_musi_play( 25 ); 
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+                                                                                
+										Specify_musi_play( 8 );      
+                                                                                //已经学习
+                                                                                 delay_ms(1000);
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                 TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);  
+                                                             
+										break;
+									}
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 5 <= i ) && ( i < NODE_CNT ) )
+								{
+									UART4_printf( "语音提示:已经学习到紧急按钮!" );
+									Specify_musi_play(39);            
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								
+								
+							}
+						}
+						
+						break;
+						//其它传感器
+					case arlrm_calling:
+						for( i = 0; i < NODE_CNT; i++ )
+						{
+							copyi = i;
+							if( pStudyStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+							{                                                                                                                                       //已学习过相同地址的传感器
+								if( i < ( NODE_CNT / dev_typ_cnt ) )
+								{
+									UART4_printf( "语音提示:已经学习到遥控器!" );
+									Specify_musi_play( 26 );    
+                                                                        //已经学习到遥控器
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt <= i ) && ( i < NODE_CNT / dev_typ_cnt * 2 ) )
+								{
+									UART4_printf( "语音提示:已经学习到门磁!" );
+									Specify_musi_play( 23 );          
+                                                                        //已经学习到门磁
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}else if( ( NODE_CNT / dev_typ_cnt * 2 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 3 ) )
+								{
+									UART4_printf( "语音提示:已经学习到红外窗幕!" );
+									Specify_musi_play( 24 );        
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 3 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 4 ) )
+								{
+									UART4_printf( "语音提示:已经学习到烟雾传感器!" );
+									Specify_musi_play( 25 );   
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt * 4 <= i ) && ( i < NODE_CNT / dev_typ_cnt * 5 ) )
+								{
+									UART4_printf( "语音提示:已经学习到燃气报警器!" );
+									Specify_musi_play( 40 );   
+                                                                        //已经学习到红外窗幕
+                                                                         delay_ms(1000);
+									i			   = NODE_CNT;                                                                                                      //跳出查找
+									Already_Study  = 1;
+									study_time	   = TickGet( );                                                                                                    //时间重新更新
+									k1			   = 0;
+									                                                                                                                                //return;
+									break;
+								}
+								else if( ( NODE_CNT / dev_typ_cnt *5 <= i ) && ( i < NODE_CNT ) )
+								{
+									if( ( pStudyStorDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyStorDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )
+									{
+										UART4_printf( "语音提示:已经学习!" );
+										Specify_musi_play( 8 );      
+                                                                                //已经学习
+                                                                                 delay_ms(1000);
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+										                                                                                                                            //return;
+										break;
+									}else
+									{
+										pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+										pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+										pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+										pStudyStorDat->addr_data_433[i].Area		   = i + 1;                                                                     //存储位号
+										Save433StudyDat( pStudyStorDat );
+										i			   = NODE_CNT;                                                                                                  //跳出查找
+										Already_Study  = 1;
+										study_time	   = TickGet( );                                                                                                //时间重新更新
+										k1			   = 0;
+                                                                                
+                                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+										                                                                                                                            //return;
+										break;
+									}
+								}
+			
+									
+								
+							}
+						}
+						
+						break;
+					default: break;
+				}
+				if( Already_Study == 1 )
+				{
+					continue;
+				}
+				//新设备学习
+				if( StudyCntAddr == NODE_CNT )
+				{
+					UART4_printf( "语音提示:已经达到学习20个设备最大值，无法学习!" );
+					Specify_musi_play( 10 ); //存储区满，请删除后再次学习
+                                         delay_ms(1000);
+					return;
+				}
+				switch( sensor )
+				{
+					case remote:
+						for( i = 0; i < ( NODE_CNT / dev_typ_cnt ); i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433			   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = remote;
+								pStudyStorDat->addr_data_433[i].Area		   = i + 1; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "remote存储成功!" );
+								Specify_musi_play( 0x06 );                              //学习成功
+								study_time	   = TickGet( );                            //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+								                                                        //return;
+                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT / dev_typ_cnt - 1 ) )
+								{
+									UART4_printf( "remote已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 );    
+                                                                        //存储区满，请删除后再次学习
+                                                                         delay_ms(1000);
+								}
+							}
+						}
+						break;
+					case  Menci:
+						for( i = ( NODE_CNT / dev_typ_cnt ); i < ( NODE_CNT / dev_typ_cnt * 2 ); i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = Menci;
+								pStudyStorDat->addr_data_433[i].Area		   = i; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "Menci存储成功!" );
+								Specify_musi_play( 0x06 );                          //学习成功
+								study_time	   = TickGet( );                        //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+                                                                 TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT / dev_typ_cnt * 2 - 1 ) )
+								{
+									UART4_printf( "Menci已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 ); //存储区满，请删除后再次学习
+                                                                         delay_ms(1000);
+								}
+							}
+						}
+						break;
+					case  Infrared:
+						for( i = ( NODE_CNT / dev_typ_cnt * 2 ); i < ( NODE_CNT / dev_typ_cnt * 3 ); i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = Infrared;
+								pStudyStorDat->addr_data_433[i].Area		   = i; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "Infrared存储成功!" );
+								Specify_musi_play( 0x06 );                          //学习成功
+								study_time	   = TickGet( );                        //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT / dev_typ_cnt * 3 - 1 ) )
+								{
+									UART4_printf( "Infrared已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 ); //存储区满，请删除后再次学习
+                                                                         delay_ms(1000);
+								}
+							}
+						}
+						break;
+					case smoke:
+						for( i = ( NODE_CNT / dev_typ_cnt * 3 ); i < NODE_CNT / dev_typ_cnt * 4; i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = smoke;
+								pStudyStorDat->addr_data_433[i].Area		   = i; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "smoke存储成功!" );
+								Specify_musi_play( 0x06 );                          //学习成功
+								study_time	   = TickGet( );                        //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT - 1 ) )
+								{
+									UART4_printf( "Other已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 );    //存储区满，请删除后再次学习
+									                            delay_ms(1000);
+								}
+							}
+						}
+						break;
+							case gas:
+						for( i = ( NODE_CNT / dev_typ_cnt * 4 ); i < dev_typ_cnt * 5; i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = gas;
+								pStudyStorDat->addr_data_433[i].Area		   = i; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "gas存储成功!" );
+								Specify_musi_play( 0x06 );                          //学习成功
+								study_time	   = TickGet( );                        //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                 handly_get_value(1,2);
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT - 1 ) )
+								{
+									UART4_printf( "Other已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 );    //存储区满，请删除后再次学习
+									                             delay_ms(1000);
+								}
+							}
+						}
+						break;
+							case arlrm_calling:
+						for( i = ( NODE_CNT / dev_typ_cnt * 5 ); i < NODE_CNT; i++ )
+						{
+							if( ( pStudyStorDat->addr_data_433[i].Area == 0 ) || ( pStudyStorDat->addr_data_433[i].Area == 0xff ) )
+							{
+								pStudyStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pStudyStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pStudyStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pStudyStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pStudyStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pStudyStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pStudyStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pStudyStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pStudyStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pStudyStorDat->Count_433					   = i + 1;
+								pStudyStorDat->addr_data_433[i].Dev_Type	   = arlrm_calling;
+								pStudyStorDat->addr_data_433[i].Area		   = i; //存储位号
+								Save433StudyDat( pStudyStorDat );
+								UART4_printf( "arlrm_calling存储成功!" );
+								Specify_musi_play( 0x06 );                          //学习成功
+								study_time	   = TickGet( );                        //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+                                                                     TIME_Get( TIM2_tick );                  //获取系统时间
+							 
+                                                                
+                                                                 memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                                wifi_sendcmd((BYTE *)temp,9,sensor+5,0);
+                                                                handly_get_value(1,2);
+                                                                
+								break;
+							}else
+							{
+								if( i == ( NODE_CNT - 1 ) )
+								{
+									UART4_printf( "Other已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_musi_play( 10 );    //存储区满，请删除后再次学习
+									                            delay_ms(1000);
+								}
+							}
+						}
+						break;
+					default: break;
+				}
+			}
+		}
+	}
+	//study_time = TickGet();
+	UART4_printf( "自学习超时，退出!" );
+	//keyflag=K_CLR;
+	//Specify_Musi_Play(u8 num);
+	//keyprocess_time = TickGet();
+	Specify_musi_play( 0x09 ); //退出学习
+	//Kmenu.Layer=0;//再次按键，从遥控器开始学习
+	keyflag = K_CLR;
+	//Specify_Musi_Play(u8 num);
+	Kmenu.Layer =1;
+}
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Delete_OneSensor( void )
+{
+  u8 temp[20];
+	u32				del_time;
+	uint8			StudyCntAddr;
+	STOR_433_DATA	* pStudyStorDat;
+	u8				i;
+	//需要开辟一个数组来存储当前检测到的各种传感器值吗?
+	del_time = TickGet( );
+	while( ( TickGet( ) > ( del_time + 4000 ) ) ? 0 : 1 )
+	{
+		pStudyStorDat  = &StudyDat;
+		StudyCntAddr   = pStudyStorDat->Count_433;
+                
+                if(keyflag==K_ENC){
+                
+                  return;
+                }
+                
+		Jiema( changgui );
+
+		// Load433StudyDat(pStudyDat);
+
+		for( i = 0; i < NODE_CNT; i++ )                                                                                                             //判断
+		{
+			if( pStudyStorDat->addr_data_433[i].Area == 0 )
+			{
+				continue;
+			}
+			if( ( pStudyStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )    //地址已经学习
+			{                                                                                                                                       //已学习过相同地址的传感器
+				UART4_printf( "R[%d]=0x%x %x %x %x %x\r\n", i, Receive[0], Receive[1], Receive[2], Receive[3], Receive[4] );
+
+				//清除该区域传感器信息
+				memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+				memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+				StudyCntAddr--;
+				if( StudyCntAddr > NODE_CNT )
+				{
+					StudyCntAddr = 0;
+				}
+				pStudyStorDat->Count_433 = StudyCntAddr;
+				Save433StudyDat( pStudyStorDat );
+                                
+                                    TIME_Get( TIM2_tick );                  //获取系统时间
+                                      memcpy(temp,Receive,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+				if( i < 5 )
+				{
+					//语音 删除单个遥控器
+					Specify_musi_play( 11 );    //删除遥控器
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                        
+                                   
+                                                                wifi_sendcmd((BYTE *)temp,9,Delete_remote,0); 
+                                        
+                                        
+				}else if( i < 10 )
+				{
+					//语音 删除单个门磁
+					Specify_musi_play( 12 );    //删除门磁窗磁
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                           wifi_sendcmd((BYTE *)temp,9,Delete_meci,0);
+				}else if( i < 15 )
+				{
+					//语音 删除单个红外
+					Specify_musi_play( 13 );    //删除红外窗幕
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                         wifi_sendcmd((BYTE *)temp,9,Delete_infrared,0);
+				}else if( i <20)
+				{
+					//语音 删除单个其它传感器
+					Specify_musi_play( 14 );    //删除烟雾传感器
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                        wifi_sendcmd((BYTE *)temp,9,Delete_smoke,0);
+				}else if( i <25)
+				{
+					//语音 删除单个其它传感器
+					Specify_musi_play( 36 );    //删除燃气传感器
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                        wifi_sendcmd((BYTE *)temp,9,Delete_gas,0);
+                                        
+				}else if( i <30)
+				{
+					//语音 删除单个其它传感器
+					Specify_musi_play( 32 );    //删除紧急按钮
+                                        delay_ms(1500);
+					Specify_musi_play( 16 );    //删除成功
+                                        wifi_sendcmd((BYTE *)temp,9,Delete_arlrm,0);
+				}
+
+				break;
+			}
+			// printf("尚未学习\r\n");
+		}
+		//printf("尚未学习\r\n");
+	}
+	//    Specify_Musi_Play(17);//退出删除
+	//   Kmenu.s1 = 1;
+	//    Kmenu.Layer++;
+	//keyflag=K_CLR;
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Delete_Sensor( u8 sensor )
+{
+	STOR_433_DATA	*pStudyStorDat;
+        
+	uint8			StudyCntAddr;
+        u8 temp[20];
+	//   u32 delete_time=0;
+	u8				i;
+	//u8 *ptr;
+	pStudyStorDat = &StudyDat;
+
+	// Load433StudyDat(pStudyStorDat);
+	StudyCntAddr = pStudyStorDat->Count_433;
+
+	//delete_time = TickGet();
+	//   while((TickGet()>(delete_time + 10000))?0:1)
+	//  {
+        
+        
+            TIME_Get( TIM2_tick );                  //获取系统时间
+                                    
+            temp[0]=calendar.hour;
+            temp[1]=calendar.min;
+            temp[2]=calendar.sec;
+            temp[3]= AlarmFlags.bIsRmt_Deploy;
+        
+	switch( sensor )
+	{
+		case remote:
+			for( i = 0; i < ( NODE_CNT /6 ); i++ )                         //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == remote )    //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+					StudyCntAddr--;
+                                       
+                                        
+				}
+			}
+			     wifi_sendcmd((BYTE *)temp,4,Delete_remote_all,0);                                                             //   Specify_Musi_Play(16);//删除成功
+			break;
+		case Menci:
+			for( i = ( NODE_CNT /6 ); i < ( NODE_CNT /6 * 2 ); i++ )      //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == Menci )     //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+					StudyCntAddr--;
+                                        
+				}
+			}
+			      wifi_sendcmd((BYTE *)temp,4,Delete_meci_all,0);                                                            //  Specify_Musi_Play(16);//删除成功
+			break;
+		case Infrared:
+			for( i = ( NODE_CNT /6 * 2 ); i < ( NODE_CNT /6 * 3 ); i++ )  //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == Infrared )  //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+					StudyCntAddr--;
+                                        
+                                       
+				}
+			}
+			       wifi_sendcmd((BYTE *)temp,4,Delete_infrared_all,0);                                                          //     Specify_Musi_Play(16);//删除成功
+			break;
+		case smoke:
+			for( i = ( NODE_CNT /6 * 3 ); i < ( NODE_CNT/6*4); i++ )          //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == smoke )     //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+
+					StudyCntAddr--;
+                                       
+				}
+			}
+			     wifi_sendcmd((BYTE *)temp,4,Delete_smoke_all,0);                                                            //    Specify_Musi_Play(16);//删除成功
+			break;
+                        case gas:
+			for( i = ( NODE_CNT / 6 * 4 ); i < ( NODE_CNT/6*5 ); i++ )          //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == gas )     //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+
+					StudyCntAddr--;
+                                       
+				}
+			}
+			     wifi_sendcmd((BYTE *)temp,4,Delete_gas_all,0);                                                            //    Specify_Musi_Play(16);//删除成功
+			break;
+                        case arlrm_calling:
+			for( i = ( NODE_CNT /6 * 5); i < ( NODE_CNT ); i++ )          //
+			{
+				if( pStudyStorDat->addr_data_433[i].Dev_Type == arlrm_calling )     //删除某一类型的传感器
+				{                                                           //清除该区域所有传感器信息
+					memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+					memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+
+					StudyCntAddr--;
+                                       
+				}
+			}
+                         wifi_sendcmd((BYTE *)temp,4,Delete_arlrm_all,0);
+			                                                                //    Specify_Musi_Play(16);//删除成功
+			break;
+		default: break;
+	}
+	if( StudyCntAddr > NODE_CNT )
+	{
+		StudyCntAddr = 0;
+	}
+	pStudyStorDat->Count_433 = StudyCntAddr;
+	Save433StudyDat( pStudyStorDat );
+
+	//(u8*)FLASH_STUDAT_ADDRESS=StudyCntAddr;
+	//}
+	//Specify_Musi_Play(17);//退出删除
+	// keyflag=K_CLR;
+	//Specify_Musi_Play(u8 num);
+	// Kmenu.Layer=0;
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+void Delete_AllSensor( void )
+{
+	STOR_433_DATA	*pStudyStorDat;
+	uint8			StudyCntAddr;
+	u8				i;
+
+	pStudyStorDat = &StudyDat;
+
+	Load433StudyDat( pStudyStorDat );
+
+	for( i = 0; i < NODE_CNT; i++ ) //
+	{
+		//清除该区域所有传感器信息
+		memset( &pStudyStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+		memset( &pStudyStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+	}
+
+	StudyCntAddr			   = 0;
+	pStudyStorDat->Count_433   = StudyCntAddr;
+	Save433StudyDat( pStudyStorDat );
+	UART4_printf( "删除所有已经学习传感器\r\n" );
+	//Specify_Musi_Play( 15 );    //删除所有传感器
+}
+
+//-------------------------------------------------------------------
+//-------------------------------------------------------------------
+int Send_ALM_infrared(BYTE *buffer)
+{
+static u32 send_time;
+
+if(AlarmFlags.bIsRmt_Deploy ==0)
+{
+ if((TickGet()-send_time)>1000*5*60){
+  send_time= TickGet();
+ wifi_sendcmd(buffer,9,ALM_infrared,0); 
+  handly_get_value(1,5); 
+  } 
+}else if((TickGet()-send_time)>1000*2*60){
+  send_time= TickGet();
+ wifi_sendcmd(buffer,9,ALM_infrared,0); 
+  handly_get_value(1,5); 
+}
+}
+ 
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+u8 cout,mencout;                        //用于紧急按键按下\门铃键 检测到的次数
+int Changgui( void )
+{
+	u8			temp[20];
+	static u8		datatemp[N * 2];
+
+      
+	static u32		remote_time[9] = { 0 };
+
+	STOR_433_DATA	* pStudyDat;
+	u8				i, j;
+
+	//需要开辟一个数组来存储当前检测到的各种传感器值吗?
+
+	pStudyDat = &StudyDat;
+
+  Jiema(changgui);
+  for( i = 0; i < N; i++ )
+	{
+		datatemp[i] = Receive[i];
+	}
+   /*     
+	Jiema( changgui );
+	for( i = 0; i < N; i++ )
+	{
+		datatemp[i+N] = Receive[i];
+	}
+        */
+
+	if( ( datatemp[0] != 0x00 ) && ( datatemp[1] != 0x00 )  && ( datatemp[2] != 0x00 ))
+	
+	{
+		// UART4_printf("DataTemp[0]=0x%x 0x%x 0x%x\r\n",DataTemp[0],DataTemp[1],DataTemp[2]);
+		// UART4_printf("DataTemp[3]=0x%x 0x%x 0x%x\r\n",DataTemp[3],DataTemp[4],DataTemp[5]);
+ /*  if((datatemp[0]==datatemp[N])&&(datatemp[1]==datatemp[N+1])&&
+      (datatemp[2]==datatemp[N+2])&&(datatemp[3]==datatemp[N+3])&&(datatemp[4]==datatemp[N+4]))*/
+		{                                                                                                                                                                                                                       //两次学习结果相同，学习成功
+			UART4_printf( "R=0x%x %x %x %x %x\r\n", Receive[0], Receive[1], Receive[2], Receive[3], Receive[4] );
+			for( i = 0; i < ( NODE_CNT / dev_typ_cnt ); i++ )                                                                                                                                                                             //判断遥控器
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                                    //地址已经学习
+				{                                                                                                                                                                                                               //已学习过相同地址的传感器
+					
+					for( j = 0; j < 4; j++ )
+					{
+						if( ( pStudyDat->addr_data_433[i].data_433[j][0] != 0 ) && ( pStudyDat->addr_data_433[i].data_433[j][1] != 0 ) || ( pStudyDat->addr_data_433[i].data_433[j][2] != 0 ) )                                 //存储有按键值
+						{
+							if( ( pStudyDat->addr_data_433[i].data_433[j][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[j][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[j][2] == Receive[4] ) )  //已经存储该按键信息
+							{
+								break;
+							}
+						}else //存储该按键
+						{
+							pStudyDat->addr_data_433[i].data_433[j][0] = Receive[2];
+							pStudyDat->addr_data_433[i].data_433[j][1] = Receive[3];
+							pStudyDat->addr_data_433[i].data_433[j][2] = Receive[4];
+							Save433StudyDat( pStudyDat );
+							break;
+						}
+					}
+					switch( j )
+					{
+						case 0:                             //布防按键
+							if( TickGet( ) - remote_time[0] > 300 )
+							{
+								remote_time[0] = TickGet( );
+                                                                TIME_Get( TIM2_tick );  
+								Specify_musi_play( 18 );    //布防
+                                                                
+							        AlarmFlags.bIsRmt_Deploy = 1;
+                                                                
+                                                                  memcpy(temp,datatemp,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                                                                wifi_sendcmd((BYTE *)temp,9 ,Bufang_remote,0);
+							      //  delay_ms( 1000 );
+								handly_get_value(1,5);        
+                                                                
+                                                                delay_ms(1000);
+                                           //    cl_out(data,pStudyDat->ad_time_433[i].Syno_Time,pStudyDat->ad_time_433[i].First_LTime,pStudyDat->ad_time_433[i].Low_Time,pStudyDat->ad_time_433[i].High_Time);
+                                                                //------------------------
+								return -1;
+							}
+							break;
+						case 1:                         //撤防按键
+							if( TickGet( ) - remote_time[1] > 300 )
+							{
+								remote_time[1] = TickGet( );
+                                                                 TIME_Get( TIM2_tick );  
+								Specify_musi_play( 19 );	
+                                                                  AlarmFlags.bIsRmt_Deploy   = 0;
+                                                                  
+                                                                    memcpy(temp,datatemp,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                   temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                                                                  
+								 wifi_sendcmd((BYTE *)temp,9,Chefang_remote,0);   
+                                                                 
+								//delay_ms( 1000 );
+                                                                handly_get_value(1,5); 
+                                                                delay_ms( 1000 );
+								return -1;
+								                                     
+							}
+							break;
+                                            case 2:                              //紧急键
+						if( TickGet( ) - remote_time[2] > 300 )
+							{
+								remote_time[2] = TickGet();
+								TIME_Get( TIM2_tick );                   //获取系统时间
+                                                                
+								Specify_Musi_Play(38);  //紧急报警
+                                                                
+                                                                memcpy(temp,datatemp,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                                                      
+                                                                 wifi_sendcmd((BYTE *)temp,9,ALM_remote,0);  
+                                                                 // delay_ms( 1000 );
+								    handly_get_value(1,5);   
+                                                             delay_ms( 1000 );                       
+                                                             // wifi_sendchar((BYTE *)temp,4);
+								return -1;
+							}
+							break;
+						case 3:
+							if( TickGet( ) - remote_time[3] > 300 )
+							{
+								
+								
+								remote_time[3] = TickGet( );
+								TIME_Get( TIM2_tick );                  //获取系统时间
+							      Specify_musi_play( 31 ); // 门铃声音
+                                                                
+                                                              memcpy(temp,datatemp,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                 temp[8]= AlarmFlags.bIsRmt_Deploy;
+                                                               
+                                                                 wifi_sendcmd((BYTE *)temp,9,Doorbell_remote,0);  
+						  
+                                                                handly_get_value(1,5); 
+                                                                delay_ms( 1000 );
+								return -1;
+							}
+							break;
+						default:
+							break;
+					} //end of  switch
+				} // end   if  学习过
+			}
+			for( i = ( NODE_CNT / dev_typ_cnt ); i < ( NODE_CNT /dev_typ_cnt * 2); i++ )                                                                                                                                                      //判断门磁窗磁
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				// break;
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                                //地址已经学习
+				{                                                                                                                                                                                                           //已学习过相同地址的传感器
+					if( ( pStudyDat->addr_data_433[i].data_433[0][0] != 0 ) && ( pStudyDat->addr_data_433[i].data_433[0][1] != 0 ) || ( pStudyDat->addr_data_433[i].data_433[0][2] != 0 ) )                                 //存储有按键值
+					{
+						if( ( pStudyDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )  //已经存储该按键信息
+						{
+							//定义一个变量，报警
+							if( TickGet( ) - remote_time[8] > 2000 )
+							{
+								remote_time[8] = TickGet( );
+								//UART4_printf("门磁窗磁报警");
+                                                                TIME_Get( TIM2_tick ); 
+                                                                if(AlarmFlags.bIsRmt_Deploy==1){
+                                                                
+                                                                 Specify_Musi_Play(21); // 报警音
+                                                                }
+                                                                
+                                                                 memcpy(temp,datatemp,5);
+                                                                  
+                                                                 temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                                       
+                                                                         wifi_sendcmd((BYTE *)temp,9,ALM_meci,0);  
+                                                                         delay_ms(1000);
+                                                                         handly_get_value(1,5); 
+								
+							}
+						}
+					}
+				}
+			}
+
+			for( i = ( NODE_CNT /dev_typ_cnt * 2 ); i < ( NODE_CNT /dev_typ_cnt * 3); i++ ) //判断红外幕帘
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				// break;
+
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                            //地址已经学习
+				{                                                                                                                                                                                                       //已学习过相同地址的传感器
+					if( ( pStudyDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )  //已经存储该按键信息
+					{
+						//定义一个变量，报警
+						if( TickGet( ) - remote_time[4] >5000)
+						{
+							remote_time[4] = TickGet( );
+                                                      
+								//UART4_printf("门磁窗磁报警");
+                                                                TIME_Get( TIM2_tick );
+							//UART4_printf("红外幕帘报警");
+                                                                if( AlarmFlags.bIsRmt_Deploy == 1 )
+                                                                {
+                                                       Specify_Musi_Play(20); // 报警音
+                                                                }
+                                                              /*  else if( AlarmFlags.bIsRmt_Deploy == 2)
+                                                                {
+                                                                  if()//
+                                                                }*/
+                                                             memcpy(temp,datatemp,5);
+                                                                  
+                                                              temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                                       
+                                                                Send_ALM_infrared((BYTE *)temp);
+                                                               //  wifi_sendcmd((BYTE *)temp,9,ALM_infrared,0); 
+                                                                     //    delay_ms(1000);
+                                                                   //      handly_get_value(1,5); 
+                                                                         
+							
+						}
+					}
+				}
+			}
+
+			for( i = ( NODE_CNT /dev_typ_cnt * 3); i < (NODE_CNT /dev_typ_cnt * 4); i++ ) //判断其它传感器
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				// break;
+
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                                    //地址已经学习
+				{                                                                                                                                                                                                               //已学习过相同地址的传感器
+					for( j = 0; j < 4; j++ )
+					{
+						if( ( pStudyDat->addr_data_433[i].data_433[j][0] != 0 ) && ( pStudyDat->addr_data_433[i].data_433[j][1] != 0 ) || ( pStudyDat->addr_data_433[i].data_433[j][2] != 0 ) )                                 //存储有按键值
+						{
+							if( ( pStudyDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )  //已经存储该按键信息
+							{
+
+								break;
+
+
+								
+
+							}
+						}else
+						{
+							pStudyDat->addr_data_433[i].data_433[j][0] = Receive[2];
+							pStudyDat->addr_data_433[i].data_433[j][1] = Receive[3];
+							pStudyDat->addr_data_433[i].data_433[j][2] = Receive[4];
+							Save433StudyDat( pStudyDat );
+							break;
+						}
+					}
+					if( TickGet( ) - remote_time[5] > 2000 )
+					{
+						remote_time[5] = TickGet( );
+						//UART4_printf("其它传感器报警");
+						
+							    TIME_Get( TIM2_tick );
+							Specify_Musi_Play(22);//烟雾传感器
+							
+                                                        
+                                                         memcpy(temp,datatemp,5);
+                                                                  
+                                                              temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                         
+                                                                 wifi_sendcmd((BYTE *)temp,9,ALM_smoke,0);
+                                                                 delay_ms(1000);
+                                                                         handly_get_value(1,5);
+						
+					}
+				}
+			}
+                for( i = ( NODE_CNT /dev_typ_cnt * 4 ); i < (NODE_CNT/dev_typ_cnt*5); i++ ) //判断其它传感器
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				// break;
+
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                                    //地址已经学习
+				{                                                                                                                                                                                                               //已学习过相同地址的传感器
+					for( j = 0; j < 4; j++ )
+					{
+						if( ( pStudyDat->addr_data_433[i].data_433[j][0] != 0 ) && ( pStudyDat->addr_data_433[i].data_433[j][1] != 0 ) || ( pStudyDat->addr_data_433[i].data_433[j][2] != 0 ) )                                 //存储有按键值
+						{
+							if( ( pStudyDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )  //已经存储该按键信息
+							{
+
+								break;
+
+
+								
+
+							}
+						}else
+						{
+							pStudyDat->addr_data_433[i].data_433[j][0] = Receive[2];
+							pStudyDat->addr_data_433[i].data_433[j][1] = Receive[3];
+							pStudyDat->addr_data_433[i].data_433[j][2] = Receive[4];
+							Save433StudyDat( pStudyDat );
+							break;
+						}
+					}
+					if( TickGet( ) - remote_time[6] > 2000 )
+					{
+						remote_time[6] = TickGet( );
+						//UART4_printf("其它传感器报警");
+						
+							    TIME_Get( TIM2_tick );
+							Specify_Musi_Play(30);//燃气传感器
+							
+                                                        
+                                                         memcpy(temp,datatemp,5);
+                                                                  
+                                                              temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                         
+                                                                 wifi_sendcmd((BYTE *)temp,9,ALM_gas,0);
+                                                                 delay_ms(1000);
+                                                                         handly_get_value(1,5);
+						
+					}
+				}
+			}
+                        for( i = ( NODE_CNT /dev_typ_cnt * 5); i < (NODE_CNT); i++ ) //判断其它传感器
+			{
+				if( pStudyDat->addr_data_433[i].Area == 0 )
+				{
+					continue;
+				}
+				// break;
+
+				if( ( pStudyDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pStudyDat->addr_data_433[i].addr_433[1] == Receive[1] ) )                                                                                    //地址已经学习
+				{                                                                                                                                                                                                               //已学习过相同地址的传感器
+					for( j = 0; j < 4; j++ )
+					{
+						if( ( pStudyDat->addr_data_433[i].data_433[j][0] != 0 ) && ( pStudyDat->addr_data_433[i].data_433[j][1] != 0 ) || ( pStudyDat->addr_data_433[i].data_433[j][2] != 0 ) )                                 //存储有按键值
+						{
+							if( ( pStudyDat->addr_data_433[i].data_433[0][0] == Receive[2] ) && ( pStudyDat->addr_data_433[i].data_433[0][1] == Receive[3] ) && ( pStudyDat->addr_data_433[i].data_433[0][2] == Receive[4] ) )  //已经存储该按键信息
+							{
+
+								break;
+
+
+								
+
+							}
+						}else
+						{
+							pStudyDat->addr_data_433[i].data_433[j][0] = Receive[2];
+							pStudyDat->addr_data_433[i].data_433[j][1] = Receive[3];
+							pStudyDat->addr_data_433[i].data_433[j][2] = Receive[4];
+							Save433StudyDat( pStudyDat );
+							break;
+						}
+					}
+					if( TickGet( ) - remote_time[7] > 2000 )
+					{
+						remote_time[7] = TickGet( );
+						//UART4_printf("其它传感器报警");
+						
+							    TIME_Get( TIM2_tick );
+							Specify_Musi_Play(29);//紧急按钮
+                                                
+                                                         memcpy(temp,datatemp,5);
+                                                                  
+                                                              temp[5]=calendar.hour;
+                                                                 temp[6]=calendar.min;
+                                                                 temp[7]=calendar.sec;
+                                                                temp[8]	   = AlarmFlags.bIsRmt_Deploy;
+                         
+                                                                 wifi_sendcmd((BYTE *)temp,9,ALM_key,0);
+                                                                 delay_ms(1000);
+                                                                         handly_get_value(1,5);
+						
+					}
+				}
+			}
+		}   //end if  两次检测值相同
+	}       //end if  检测到值不是零
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+u16 GenerateRandomU16( void ) //利用adc产生随机数种子
+{
+	u16 tmp	   = 0;
+	u16 mask   = 0x8000;
+
+	do
+	{
+		while( ADC_GetFlagStatus( ADC2, ADC_FLAG_EOC ) == RESET )
+		{
+			;                                                           //等待ADC转完成
+		}
+		tmp	  |= ( ADC_GetConversionValue( ADC2 ) & 0x01 ) ? mask : 0;  //set tmp based on adc's lsb
+		mask   = mask >> 1;                                             //shift to the next bit
+	}
+	while( mask );
+
+	return tmp;
+}
+
+//利用每个cpu id的唯一性，生成每个设备的ID
+
+
+/*void MakeDeviceID(u8 *pdeviceID)
+   {
+
+   u32 CpuID[3];
+   //获取CPU唯一ID
+   CpuID[0]=*(u32*)(0x1ffff7e8);
+   CpuID[1]=*(u32*)(0x1ffff7ec);
+   CpuID[2]=*(u32*)(0x1ffff7f0);
+   printf("CPUID1=%x,CPUID2=%x,CPUID3=%x",CpuID[0],CpuID[1],CpuID[2]);
+   //很简单的算法
+   *pdeviceID=(u8)(((CpuID[0]>>3)+(CpuID[1]*7)+(CpuID[2]+21))& 0xff);
+   pdeviceID++;
+   *pdeviceID=(u8)(((CpuID[0]>>2)+(CpuID[1]*6)+(CpuID[2]+20))&0xff00 >> 8);
+
+   pdeviceID++;                                                                                                      //用于产生32位ID
+   *pdeviceID=(u8)(((CpuID[0]>>4)+(CpuID[1]*5)+(CpuID[2]+19))&0xff00 >> 8);
+
+   pdeviceID++;
+   *pdeviceID=(u8)(((CpuID[0]>>1)+(CpuID[1]*4)+(CpuID[2]+18))&0xff00 >> 8);
+
+   }*/
+void send_433data(u8 *data){
+	
+	// SEND_433_DATA	*pSendStorDat;
+	  uint8 		DataTemp[60];
+	//   uint8			SendCntAddr;
+	//   uint8			i, j;
+	   
+	  // pSendStorDat = &SendDat;
+	  
+	//	Load433SendDat( pSendStorDat );
+	//	SendCntAddr = pSendStorDat->Count_433;
+		   memcpy(DataTemp,data,N+1); 	
+                   
+             if(DataTemp[0]==0x22) {
+                  cl_out(&DataTemp[1],984,0,0x2C,0X54);//控制窗帘
+                  delay_ms(3);
+             }
+            else  {
+                fashe_out(&DataTemp[1],885,0,35,88,10);//控制插座、开关灯
+                delay_ms(3);
+            }
+
+          /* if(DataTemp[0]==0x22){ 
+
+                          cl_out(&DataTemp[1],984,0,0x2C,0X54);//控制窗帘
+                          //delay_ms(3);
+                           }
+           else if(DataTemp[0]==0x20)//控制插座
+                           {
+                           fashe_out(&DataTemp[1],885,0,35,88,10);
+                             //delay_ms(3);
+			   }
+             else if(DataTemp[0]==0x21)//控制开关灯
+                           {
+                           fashe_out(&DataTemp[1],885,0,35,88,10);
+                           //   delay_ms(3);
+			   } */
+                                             
+                   
+                   
+        /*           
+		for( i = 0; i < SEND_CNT; i++ ){
+		
+		if( pSendStorDat->addr_data_433[i].Area == 0 )
+		{
+		continue;
+		}
+		
+		if(  ( pSendStorDat->addr_data_433[i].addr_433[0] == DataTemp[1] ) &&( pSendStorDat->addr_data_433[i].addr_433[1] == DataTemp[2] ))
+		{
+		  
+		  for(j=0;j<4;j++)
+		  {
+			
+			
+                    if((pSendStorDat->addr_data_433[i].data_433[j][0] == DataTemp[3] ) && ( pSendStorDat->addr_data_433[i].data_433[j][1] == DataTemp[4] )
+			 
+                       &&( pSendStorDat->addr_data_433[i].data_433[j][2] == DataTemp[5] ) )
+			 {
+			//   delay_ms(2000);  
+                           if(DataTemp[0]==0x22){ 
+
+                          cl_out(&DataTemp[1],984,0,0x2C,0X54);//控制窗帘
+                           }
+                           else if(DataTemp[0]==0x20)//控制插座
+                           {
+                           fashe_out(&DataTemp[1],885,0,35,88);
+			   }
+                           else if(DataTemp[0]==0x21)//控制开关灯
+                           {
+                           fashe_out(&DataTemp[1],885,0,35,88);
+			   } 
+                           
+                         }
+			
+		  }
+		}
+		}
+	*/
+	}
+
+
+
+void delete_433data(u8 dev_typ,u8 *data){
+	
+	 SEND_433_DATA	*pSendStorDat;
+	  uint8 		DataTemp[20];
+	   uint8			SendCntAddr;
+	   uint8			i, j;
+	   u8 temp[30];
+	   pSendStorDat = &SendDat;
+	  
+		Load433SendDat( pSendStorDat );
+		SendCntAddr = pSendStorDat->Count_433;
+		   memcpy(DataTemp,data,N); 				 
+		for( i = 0; i < SEND_CNT; i++ ){
+		
+		if( pSendStorDat->addr_data_433[i].Area == 0 )
+		{
+		continue;
+		}
+		
+		if(  ( pSendStorDat->addr_data_433[i].addr_433[0] == DataTemp[0] ) &&( pSendStorDat->addr_data_433[i].addr_433[1] == DataTemp[1] ))
+		{
+	
+                  
+		  for(j=0;j<4;j++)
+		  {
+			
+			
+                    if((pSendStorDat->addr_data_433[i].data_433[j][0] == DataTemp[2] ) && ( pSendStorDat->addr_data_433[i].data_433[j][1] == DataTemp[3] )
+			 
+                       &&( pSendStorDat->addr_data_433[i].data_433[j][2] == DataTemp[4] ) )
+			 {
+			   //delay_ms(2000);   
+                           
+                           
+                          	memset( &pSendStorDat->addr_data_433[i].addr_433[0], 0x00, sizeof( RX_Data_433 ) );
+				memset( &pSendStorDat->ad_time_433[i].Syno_Time, 0x00, sizeof( TX_Time_433 ) );
+				SendCntAddr--;
+				if( SendCntAddr > SEND_CNT )
+				{
+					SendCntAddr = 0;
+				}
+				pSendStorDat->Count_433 = SendCntAddr;
+				Save433SendDat( pSendStorDat );
+                                
+                                    TIME_Get( TIM2_tick );                  //获取系统时间
+                                    temp[0]=dev_typ;
+                                                     memcpy(&temp[1],Receive,5);
+                                                                  
+                                                     temp[6]=calendar.hour;
+                                                    temp[7]=calendar.min;
+                                                    temp[8]=calendar.sec;
+                                                    temp[9]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                               wifi_sendcmd((BYTE *)temp,10,Delete_433_device,0);
+	                                                         handly_get_value(1,5);
+                                                                 Specify_Musi_Play(42);             //删除智能硬件
+                                                                        
+                        //   fashe_out(DataTemp,pSendStorDat->ad_time_433[i].Syno_Time,pSendStorDat->ad_time_433[i].First_LTime, pSendStorDat->ad_time_433[i].Low_Time,pSendStorDat->ad_time_433[i].High_Time);
+			   } 
+			
+		  }
+		}
+		}
+	
+	}
+
+void hand_save_433(u8 dev_typ){
+  
+  uint8			k1 = 0;
+	//static u8		k2 = 0;
+  u8 temp[30];
+	
+	uint8			DataTemp[N*2]; //用于学习两次jiama()值，对比，一致才学习成功。
+  SEND_433_DATA	*pSendStorDat;
+  uint8			SendCntAddr;
+  uint8			SendTemp[2 * N]; //用于学习两次jiama()值，对比，一致才学习成功。
+  uint8			i, j;
+  u32				send_time	   = 0;
+   u32				study_time	   = 0;     
+  u8				Already_Study = 0;
+  pSendStorDat = &SendDat;
+  study_time	   = TickGet( );
+  
+  while( ( TickGet( ) > ( study_time + 8000 ) ) ? 0 : 1 ) //8秒超时退出
+	{
+  
+                Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i] = Receive[i];
+		}
+
+		//delay_ms( 20 );
+		Jiema( study );
+		for( i = 0; i < N; i++ )
+		{
+			DataTemp[i + N] = Receive[i];
+		}
+
+		if( Already_Study == 1 )
+		{
+			Already_Study = 0;
+		}
+                
+                
+		if( ( DataTemp[0] != 0x00 ) && ( DataTemp[1] != 0x00 ) && ( DataTemp[2] != 0x00 ) && ( DataTemp[N] != 0x00 ) && ( DataTemp[N + 1] != 0x00 ) && ( DataTemp[N + 2] != 0x00 ) )
+		{ 
+			if( ( DataTemp[0] == DataTemp[N] ) && ( DataTemp[1] == DataTemp[N + 1] ) && ( DataTemp[2] == DataTemp[N + 2] ) && ( DataTemp[3] == DataTemp[N + 3] ) && ( DataTemp[4] == DataTemp[N + 4] ) )
+			{
+                           
+                    /*
+                          Load433SendDat( pSendStorDat );
+				SendCntAddr = pSendStorDat->Count_433;
+                          
+                                for( i = 0; i < SEND_CNT; i++ )
+						{
+							
+							if( pSendStorDat->addr_data_433[i].Area == 0 )
+							{
+								continue;
+							}
+							if( ( pSendStorDat->addr_data_433[i].addr_433[0] == Receive[0] ) && ( pSendStorDat->addr_data_433[i].addr_433[1] == Receive[1] ) )
+                                                        {
+                                                          
+                                                        for( j = 0; j < 4; j++ )
+									{
+										copyj = j;
+								if( ( pSendStorDat->addr_data_433[i].data_433[j][0] == Receive[2] ) && ( pSendStorDat->addr_data_433[i].data_433[j][1] == Receive[3] )
+                                                                   && ( pSendStorDat->addr_data_433[i].data_433[j][2] == Receive[4] ) )
+										{
+									UART4_printf( "语音提示:已经匹配!" );
+									Specify_Musi_Play(46);             //已经匹配
+                                                                        delay_ms(1000);
+											i			   = NODE_CNT;          //跳出查找
+											Already_Study  = 1;
+											study_time	   = TickGet( );        //时间重新更新
+											k1			   = 0;
+											                                    //return;
+											break;
+										}
+                                                                                else if( ( ( pSendStorDat->addr_data_433[i].data_433[j][0] == 0 ) || ( pSendStorDat->addr_data_433[i].data_433[j][0] == 0xff ) ) 
+                                                                                        && ( ( pSendStorDat->addr_data_433[i].data_433[j][1] == 0 ) || ( pSendStorDat->addr_data_433[i].data_433[j][1] == 0xff ) )
+                                                                                          && ( (pSendStorDat->addr_data_433[i].data_433[j][2] == 0 ) || ( pSendStorDat->addr_data_433[i].data_433[j][2] == 0xff ) ) )
+										{
+											UART4_printf( "语音提示:遥控器学习另外一个按键值!" );
+											//Specify_Musi_Play( 0x06 );          //学习成功
+											pSendStorDat->addr_data_433[i].data_433[j][0] = Receive[2];
+											pSendStorDat->addr_data_433[i].data_433[j][1] = Receive[3];
+											pSendStorDat->addr_data_433[i].data_433[j][2] = Receive[4];
+											Save433SendDat( pSendStorDat);   //存储遥控器的另外键值
+											i			   = SEND_CNT;          //跳出查找
+											study_time	   = TickGet( );        //时间重新更新
+										      send_433data(Receive);   
+                                                                                        k1			   = 0;
+											Already_Study  = 1;
+											                                    //return;
+                                                                                  Specify_Musi_Play(43);             //匹配成功
+                                                                                        delay_ms(500);
+                                                                                           TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                temp[0]=dev_typ;
+                                                                 memcpy(&temp[1],Receive,5);
+                                                                  
+                                                                 temp[6]=calendar.hour;
+                                                                 temp[7]=calendar.min;
+                                                                 temp[8]=calendar.sec;
+                                                                 temp[9]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                               wifi_sendcmd((BYTE *)temp,10,Study_433_device,0); 
+                                                                     handly_get_value(1,5);                     
+                                                                                        
+											break;
+										}
+                                                                        }
+                                                        
+                                                        
+                                                        
+                                                        
+                                                        
+								}
+                                                        
+                                                        }
+                                if( Already_Study == 1 )
+				{
+					continue;
+				}
+				//新设备学习
+				if( SendCntAddr == SEND_CNT )
+				{
+					UART4_printf( "语音提示:已经达到学习20个设备最大值，无法学习!" );
+					Specify_Musi_Play( 10 ); //存储区满，请删除后再次学习
+					return;
+				}
+                  for( i = 0; i < (SEND_CNT); i++ )
+				{
+					if( ( pSendStorDat->addr_data_433[i].Area == 0 ) || ( pSendStorDat->addr_data_433[i].Area == 0xff ) )
+					{
+								pSendStorDat->addr_data_433[i].addr_433[0]	   = Receive[0];
+								pSendStorDat->addr_data_433[i].addr_433[1]	   = Receive[1];
+								pSendStorDat->addr_data_433[i].data_433[0][0] = Receive[2];
+								pSendStorDat->addr_data_433[i].data_433[0][1] = Receive[3];
+								pSendStorDat->addr_data_433[i].data_433[0][2] = Receive[4];
+								pSendStorDat->ad_time_433[i].Syno_Time		   = SYNO_T;
+								pSendStorDat->ad_time_433[i].First_LTime	   = FIRST_LT;
+								pSendStorDat->ad_time_433[i].Low_Time		   = LOW_T;
+								pSendStorDat->ad_time_433[i].High_Time		   = HIGH_T;
+								pSendStorDat->Count_433			   = i + 1;
+								pSendStorDat->addr_data_433[i].Dev_Type	   = remote;
+								pSendStorDat->addr_data_433[i].Area		   = i + 1; //存储位号
+								Save433SendDat(pSendStorDat );
+								UART4_printf( "remote存储成功!" );
+								//Specify_Musi_Play( 0x06 );                              //学习成功
+								study_time	   = TickGet( );                            //时间重新更新
+								Already_Study  = 1;
+								k1			   = 0;
+								   
+                                                                  Specify_Musi_Play(43);             //匹配成功
+                                                                           delay_ms(500);             
+                                                                 TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                
+                                                                temp[0]=dev_typ;
+                                                                 memcpy(&temp[1],Receive,5);
+                                                                  
+                                                                 temp[6]=calendar.hour;
+                                                                 temp[7]=calendar.min;
+                                                                 temp[8]=calendar.sec;
+                                                                 temp[9]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                               wifi_sendcmd((BYTE *)temp,10,Study_433_device,0);
+                                                                   handly_get_value(1,5);
+                                                             //  delay_ms(1000);
+                                                            //   send_433data(Receive);    
+                                                             
+								break;
+							}else
+							{
+								if( i == SEND_CNT- 1)
+								{
+									UART4_printf( "remote已经超过%d个，请铲除后再学习!", ( NODE_CNT / dev_typ_cnt ) );
+									Specify_Musi_Play( 10 ); 
+                                                                        delay_ms(1000);
+                                                                        //存储区满，请删除后再次学习
+								}
+							}
+                                
+                                                }//end  for     */
+                          
+                            Specify_Musi_Play(43);             //匹配成功
+                                                                                        delay_ms(500);
+                                                                                           TIME_Get( TIM2_tick );                  //获取系统时间
+							    
+                                                                temp[0]=dev_typ;
+                                                                 memcpy(&temp[1],Receive,5);
+                                                                  
+                                                                 temp[6]=calendar.hour;
+                                                                 temp[7]=calendar.min;
+                                                                 temp[8]=calendar.sec;
+                                                                 temp[9]= AlarmFlags.bIsRmt_Deploy;
+                                                              
+                                                               wifi_sendcmd((BYTE *)temp,10,Study_433_device,0); 
+                                                                     handly_get_value(1,5);                     
+                           }
+                      
+                }
+        }
+  
+}
+
+
+
+void InitSendDefault(SEND_433_DATA *pSendDat)
+{
+	memset(pSendDat,0,sizeof(SEND_433_DATA));
+
+	//pStudyDat->Count_433= 0;
+	Save433SendDat(&SendDat);
+}
+
+BOOL Save433SendDat(SEND_433_DATA *pSendDat)
+{
+	int32_t datalong=0;
+	u32 checksum=0;
+	//u8 flash_data[1024];
+	u8 *ptr;
+	u32 i=0;
+
+	ptr = (u8*)FLASH_SEND_ADDRESS;
+
+	memset(&flash_data[0], 0x00, sizeof(flash_data));
+	memcpy(&flash_data[0],ptr,1024);
+
+	datalong =sizeof(SEND_433_DATA);
+    
+	checksum =(u32)CRC16((u8*)pSendDat,datalong);
+
+	memcpy(&flash_data[0],(u8 *)pSendDat,datalong);
+	memcpy(&flash_data[datalong],(u8 *)&checksum,sizeof(checksum));
+	
+	FLASH_Unlock();
+	FLASH_ClearFlag(FLASH_FLAG_EOP|FLASH_FLAG_PGERR|FLASH_FLAG_WRPRTERR);
+	// FLASH_ClearFlag(FLASH_FLAG_EOP|FLASH_FLAG_PGERR|FLASH_FLAG_WRPERR);
+        FLASH_ErasePage(FLASH_SEND_ADDRESS);
+	for(i=0;i<512;i++)
+		{
+			FLASH_ProgramHalfWord((FLASH_SEND_ADDRESS+2*i ),*((u16 *)&flash_data[0]+i));
+
+		}
+	FLASH_Lock();
+
+
+	return TRUE;
+
+}
+
+
+void InitSendDat(SEND_433_DATA *pSendDat)
+{
+
+	if(CheckSendDatExist()) //保存区若有有效配置，则恢复
+		{
+			//InitSendDefault(pSendDat);
+               Load433SendDat(pSendDat);
+		}
+	else				//否则默认配置
+		{
+			InitSendDefault(pSendDat);
+			
+		}
+
+}
+
+
+BOOL Load433SendDat(SEND_433_DATA *pSendDat)
+{
+	
+	
+	SEND_433_DATA * ptr;
+
+	ptr = (SEND_433_DATA *) FLASH_SEND_ADDRESS;
+
+	memcpy(pSendDat,ptr,sizeof(SEND_433_DATA));
+
+	return TRUE;
+}
+
+
+
+void MakeDeviceID( u8 *pdeviceID )
+{
+	u32 CpuID[3];
+	u32 tempID;
+	//获取CPU唯一ID
+	CpuID[0]   = *(u32*)( 0x1ffff7e8 );
+	CpuID[1]   = *(u32*)( 0x1ffff7ec );
+	CpuID[2]   = *(u32*)( 0x1ffff7f0 );
+	printf( "CPUID1=%x,CPUID2=%x,CPUID3=%x\r\n", CpuID[0], CpuID[1], CpuID[2] );
+	//很简单的算法
+	tempID = CpuID[0] + CpuID[1] + CpuID[2];
+	printf( "ID=%d\r\n", tempID );
+	printf( "ID=%X\r\n", tempID );
+	//*pdeviceID=(u8)(((CpuID[0]>>3)+(CpuID[1]*7)+(CpuID[2]+21))& 0xff);
+	*pdeviceID = (u8)tempID;
+	pdeviceID++;
+	//*pdeviceID=(u8)(((CpuID[0]>>2)+(CpuID[1]*6)+(CpuID[2]+20))&0xff00 >> 8);
+	*pdeviceID = (u8)( tempID >> 8 );
+	pdeviceID++;                                                                                              //用于产生32位ID
+	// *pdeviceID=(u8)(((CpuID[0]>>4)+(CpuID[1]*5)+(CpuID[2]+19))&0xff00 >> 8);
+	*pdeviceID = (u8)( tempID >> 16 );
+	pdeviceID++;
+	//  *pdeviceID=(u8)(((CpuID[0]>>1)+(CpuID[1]*4)+(CpuID[2]+18))&0xff00 >> 8);
+	*pdeviceID = (u8)( tempID >> 24 );
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+
+
+void InitStudatDefault(STOR_433_DATA *pStudyDat)
+{
+	memset(pStudyDat,0,sizeof(STOR_433_DATA));
+
+	//pStudyDat->Count_433= 0;
+	Save433StudyDat(&StudyDat);
+}
+
+
+void InitAlarmFlags(void)
+{
+   AlarmFlags.bIsRmt_Deploy = 0; //布防撤防
+   AlarmFlags.bIsIrf_ALARM = 0;//红外窗幕
+   AlarmFlags.bIsMnc_ALAM = 0;//门磁窗磁
+   AlarmFlags.bIsOth_ALAM = 0;//其它传感器
+   AlarmFlags.bIsIR_BodyIn = 0;//红外检测
+   AlarmFlags.bIsMW_BodyIn = 0;//微波检测
+   AlarmFlags.bIsCD_BodyIn = 0;//超声波检测
+
+   
+   FlagFirstRun = TRUE;
+
+}
+
+BOOL Save433StudyDat(STOR_433_DATA *pStudyDat)
+{
+	int32_t datalong=0;
+	u32 checksum=0;
+	//u8 flash_data[1024];
+	u8 *ptr;
+	u32 i=0;
+
+	ptr = (u8*)FLASH_STUDAT_ADDRESS;
+
+	memset(&flash_data[0], 0x00, sizeof(flash_data));
+	memcpy(&flash_data[0],ptr,1024);
+
+	datalong =sizeof(STOR_433_DATA);
+    
+	checksum =(u32)CRC16((u8*)pStudyDat,datalong);
+
+	memcpy(&flash_data[0],(u8 *)pStudyDat,datalong);
+	memcpy(&flash_data[datalong],(u8 *)&checksum,sizeof(checksum));
+	
+	FLASH_Unlock();
+	FLASH_ClearFlag(FLASH_FLAG_EOP|FLASH_FLAG_PGERR|FLASH_FLAG_WRPRTERR);
+	// FLASH_ClearFlag(FLASH_FLAG_EOP|FLASH_FLAG_PGERR|FLASH_FLAG_WRPERR);
+        FLASH_ErasePage(FLASH_STUDAT_ADDRESS);
+	for(i=0;i<512;i++)
+		{
+			FLASH_ProgramHalfWord((FLASH_STUDAT_ADDRESS+2*i ),*((u16 *)&flash_data[0]+i));
+
+		}
+	FLASH_Lock();
+
+
+	return TRUE;
+
+}
+
+
+BOOL SaveDevInfo(DEVICE_INFO *pDevInfo)
+{
+
+
+	int32_t datalong=0;
+	u32 checksum=0;
+	//u8 flash_data[1024];
+	u8 *ptr;
+	u32 i=0;
+
+	ptr = (u8*)FLASH_SAVE_ADDRESS;
+
+	memset(&flash_data[0], 0x00, sizeof(flash_data));
+	memcpy(&flash_data[0],ptr,1024);
+
+	datalong =sizeof(DEVICE_INFO);
+	checksum = (u32)CRC16((u8 *)(pDevInfo),datalong);
+
+	memcpy(&flash_data[FLASH_DEVINFO_OFFSET],(u8 *)pDevInfo,datalong);
+	memcpy(&flash_data[FLASH_DEVINFO_OFFSET+datalong],(u8 *)&checksum,sizeof(checksum));
+	
+	FLASH_Unlock();
+       FLASH_ClearFlag( FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR );
+	FLASH_ErasePage( FLASH_DEVINFO_ADDRESS );
+	for(i=0;i<512;i++)
+		{
+			FLASH_ProgramHalfWord((FLASH_SAVE_ADDRESS+2*i ),*((u16 *)&flash_data[0]+i));
+
+		}
+	FLASH_Lock();
+
+
+	return TRUE;
+
+}
+
+
+
+
+
+
+BOOL CheckStuDatExist(void)
+{
+	u8 * ptr;
+	int32_t datalong=0;
+	u32 checksum=0;
+	u16 tmp=0;
+	
+	ptr = (u8 *) FLASH_STUDAT_ADDRESS;
+	datalong =sizeof(STOR_433_DATA);
+	checksum = (u32)CRC16(ptr,datalong);
+	tmp = *((u16*)(ptr+datalong));
+
+
+	if(tmp==checksum)	
+		{
+			return TRUE;
+		}
+	else
+		{
+			return FALSE;
+		}
+	
+}
+
+BOOL CheckDevInfoExist(void)
+{
+	u8 * ptr;
+	
+	int32_t datalong=0;
+	u32 checksum=0;
+	u16 tmp=0;
+	
+	ptr = (u8 *) FLASH_DEVINFO_ADDRESS;
+	datalong =sizeof(DEVICE_INFO);
+	checksum = (u32)CRC16(ptr,datalong);
+	tmp = *((u16*)(ptr+datalong));
+
+
+	if(tmp==checksum)	
+		{
+			return TRUE;
+		}
+	else
+		{
+			return FALSE;
+		}
+	
+}
+
+void InitStuDat(STOR_433_DATA *pStudyDat)
+{
+
+	if(CheckStuDatExist()) //保存区若有有效配置，则恢复
+		{
+			//InitStudatDefault(pStudyDat);
+                Load433StudyDat(pStudyDat);
+		}
+	else				//否则默认配置
+		{
+			InitStudatDefault(pStudyDat);
+			
+		}
+
+}
+
+
+
+
+
+void InitDevInfoDefault(DEVICE_INFO *pDevInfo)
+{
+
+  memset(pDevInfo,0,sizeof(DEVICE_INFO));
+  
+  //DeviceName
+  pDevInfo->DeviceName[0] = 'W';
+  pDevInfo->DeviceName[1] = 'I';
+  pDevInfo->DeviceName[2] = 'F';
+  pDevInfo->DeviceName[3] = 'I';
+  pDevInfo->DeviceName[4] = '-';
+  pDevInfo->DeviceName[5] = '4';
+  pDevInfo->DeviceName[6] = '3';
+  pDevInfo->DeviceName[7] = '3';
+  pDevInfo->DeviceName[8] = 'S';
+  
+  
+  //DeviceID
+ // for(i = 0; i < 4; i++)
+  //pDevInfo->DevcieID[i] =(u8)GenerateRandomU16() & 0x00ff;
+  MakeDeviceID(&pDevInfo->DevcieID[0]);
+  
+  //FirmwareVer
+  pDevInfo->FirmwareVer[0] = 'V';
+  pDevInfo->FirmwareVer[1] = '0';
+  pDevInfo->FirmwareVer[2] = '0';
+  pDevInfo->FirmwareVer[3] = '1';
+  
+  //SerialNO
+  pDevInfo->SerialNO[0] = 'V';
+  pDevInfo->SerialNO[1] = '0';
+  pDevInfo->SerialNO[2] = '0';
+  pDevInfo->SerialNO[3] = '0';
+  pDevInfo->SerialNO[4] = '0';
+  pDevInfo->SerialNO[5] = '0';
+  pDevInfo->SerialNO[6] = '0';
+  pDevInfo->SerialNO[7] = '1';
+  SaveDevInfo(&Deviceinfo);
+}
+
+void InitWifDefault(WIFI_INFO *pwifi_info)
+{
+ pwifi_info->voice_flags=0;
+  memset(pwifi_info,0,sizeof(WIFI_INFO));
+  memcpy(&(pwifi_info->Address[0]),&addr,sizeof(addr));
+  memcpy(&pwifi_info->Port,&port,sizeof(port));
+  memcpy(&(pwifi_info->ssid[0]),SSID,strlen(SSID));
+  memcpy(&(pwifi_info->password[0]),PassWord,strlen(PassWord));
+  //pStudyDat->Count_433= 0;
+  SaveWifiInfo(pwifi_info);
+}
+
+
+
+
+BOOL SaveWifiInfo(WIFI_INFO *pWifi_info)
+{
+  
+  
+  int32_t datalong=0;
+  uint32_t checksum=0;
+ // uint8_t flash_data[1024];
+  uint8_t *ptr;
+  uint32_t i=0;
+  
+  ptr = (uint8_t*)FLASH_SAVE_ADDRESS;
+  
+  memset(&flash_data[0], 0x00, sizeof(flash_data));
+  memcpy(&flash_data[0],ptr,1024);
+  
+  datalong =sizeof(WIFI_INFO);
+  checksum = (uint32_t)CRC16((uint8_t *)(pWifi_info),datalong);
+  
+  memcpy(&flash_data[FLASH_WIFINFO_OFFSET],(uint8_t *)pWifi_info,datalong);
+  memcpy(&flash_data[FLASH_WIFINFO_OFFSET+datalong],(uint8_t *)&checksum,sizeof(checksum));
+  
+  FLASH_Unlock();
+   
+  FLASH_ClearFlag( FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR );
+ 
+  FLASH_ErasePage(FLASH_WIFINFO_ADDRESS);
+  for(i=0;i<512;i++)
+  {
+	FLASH_ProgramHalfWord((FLASH_SAVE_ADDRESS+2*i ),*((uint16_t *)&flash_data[0]+i));
+	
+  }
+  FLASH_Lock();
+  
+  
+  return TRUE;
+  
+}
+
+
+BOOL Load433StudyDat(STOR_433_DATA *pStudyDat)
+{
+	
+	
+	STOR_433_DATA * ptr;
+
+	ptr = (STOR_433_DATA *) FLASH_STUDAT_ADDRESS;
+
+	memcpy(pStudyDat,ptr,sizeof(STOR_433_DATA));
+
+	return TRUE;
+}
+
+BOOL LoadWifInfo(WIFI_INFO *pwifi_info)
+{
+  
+  
+  WIFI_INFO * ptr;
+  
+  ptr = (WIFI_INFO *) FLASH_WIFINFO_ADDRESS;
+  
+  memcpy(pwifi_info,ptr,sizeof(WIFI_INFO));
+  
+  return TRUE;
+}
+
+
+
+BOOL CheckSendDatExist(void)
+{
+	u8 * ptr;
+	int32_t datalong=0;
+	u32 checksum=0;
+	u16 tmp=0;
+	
+	ptr = (u8 *) FLASH_SEND_ADDRESS;
+	datalong =sizeof(SEND_433_DATA);
+	checksum = (u32)CRC16(ptr,datalong);
+	tmp = *((u16*)(ptr+datalong));
+
+
+	if(tmp==checksum)	
+		{
+			return TRUE;
+		}
+	else
+		{
+			return FALSE;
+		}
+	
+}
+
+BOOL CheckWifInfoExist(void)
+{
+  uint8_t * ptr;
+  
+  int32_t datalong=0;
+  uint32_t checksum=0;
+  uint16_t tmp=0;
+  
+  ptr = (uint8_t *) FLASH_WIFINFO_ADDRESS;
+  datalong =sizeof(WIFI_INFO);
+  checksum = (uint32_t)CRC16(ptr,datalong);
+  tmp = *((uint16_t*)(ptr+datalong));
+  
+  
+  if(tmp==checksum)	
+  {
+	return TRUE;
+  }
+  else
+  {
+	return FALSE;
+  }
+  
+}
+
+BOOL LoadDevInfo(DEVICE_INFO *pDevInfo)
+{
+  
+  
+  DEVICE_INFO * ptr;
+  
+  ptr = (DEVICE_INFO *) FLASH_DEVINFO_ADDRESS;
+  
+  memcpy(pDevInfo,ptr,sizeof(DEVICE_INFO));
+  
+  return TRUE;
+}
+
+
+void InitWifInfo(WIFI_INFO *wifi_info)
+{
+  
+  if(CheckWifInfoExist()) //保存区若有有效配置，则恢复
+  {
+    // InitWifDefault(wifi_info);
+  
+	LoadWifInfo(wifi_info);
+  }
+  else				//否则默认配置
+  {
+	InitWifDefault(wifi_info);
+	//SaveDevInfo(&Deviceinfo);
+  }
+  
+}
+
+void InitDevInfo(DEVICE_INFO *pDevInfo)
+{
+  // InitDevInfoDefault(&Deviceinfo);
+  if(CheckDevInfoExist()) //保存区若有有效配置，则恢复
+  {
+	//InitDevInfoDefault(&Deviceinfo);
+	LoadDevInfo(&Deviceinfo);
+  }
+  else				//否则默认配置
+  {
+	InitDevInfoDefault(&Deviceinfo);
+	//SaveDevInfo(&Deviceinfo);
+  }
+  
+}
+
+u16 Get_Adc( void )
+{
+	//设置指定ADC的规则组通道，一个序列，采样时间
+	ADC_RegularChannelConfig( ADC1, 10, 1, ADC_SampleTime_239Cycles5 ); //ADC1,ADC通道,采样时间为239.5周期
+
+	ADC_SoftwareStartConvCmd( ADC1, ENABLE );                           //使能指定的ADC1的软件转换启动功能
+
+	while( !ADC_GetFlagStatus( ADC1, ADC_FLAG_EOC ) )
+	{
+		;                                                               //等待转换结束
+	}
+	return ADC_GetConversionValue( ADC1 );                              //返回最近一次ADC1规则组的转换结果
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+u16 Get_Adc_Average( u8 times )
+{
+	u32 temp_val = 0;
+	u8	t;
+	for( t = 0; t < times; t++ )
+	{
+		temp_val += Get_Adc( );
+		//delay_ms(5);
+	}
+	//printf("v1=%d",(u16)((temp_val>>3)*3300>>12));
+	return (u16)( ( ( temp_val / times ) * 330 * 78 ) >> 12 ); //mv
+}
+
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+/*void net_sendstats( u8 *ptemp, u8 num )
+{
+	LED2_ON;
+	//  pEsto_4U[1].errCode=0x01;
+	if( TickGet( ) - net_send_timer > 1 * 30 * 1000 || first_bf == 1 )
+	{
+		first_bf = 0;
+
+		wifi_sendcmd( (BYTE *)ptemp, 4, H_send_baojing, 1 );
+		delay_ms( 1000 );
+		net_send_timer = TickGet( );
+	}
+}
+*/
+/***********************************************************
+* Function:       // 函数名称
+* Description:    // 函数功能、性能等的描述
+* Input:          // 1.输入参数1，说明，包括每个参数的作用、取值说明及参数间关系
+* Input:          // 2.输入参数2，说明，包括每个参数的作用、取值说明及参数间关系
+* Output:         // 1.输出参数1，说明
+* Return:         // 函数返回值的说明
+* Others:         // 其它说明
+***********************************************************/
+
+/************************************** The End Of File **************************************/

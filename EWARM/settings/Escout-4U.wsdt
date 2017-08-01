@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+
+<Workspace>
+  <ConfigDictionary>
+    
+  <CurrentConfigs><Project>Escout-4U/Debug</Project></CurrentConfigs></ConfigDictionary>
+  <Desktop>
+    <Static>
+      <Workspace>
+        <ColumnWidths>
+          
+          
+          
+          
+        <Column0>280</Column0><Column1>27</Column1><Column2>27</Column2><Column3>27</Column3></ColumnWidths>
+      </Workspace>
+      <Build>
+        
+        
+        
+        
+      <PreferedWindows><Position>3</Position><ScreenPosX>0</ScreenPosX><ScreenPosY>0</ScreenPosY><Windows><Window><Factory>Debug-Log</Factory></Window><Window><Factory>Find-All-Declarations</Factory></Window></Windows></PreferedWindows><ColumnWidth0>20</ColumnWidth0><ColumnWidth1>1395</ColumnWidth1><ColumnWidth2>372</ColumnWidth2><ColumnWidth3>93</ColumnWidth3></Build>
+      <Debug-Log>
+        
+        
+      <ColumnWidth0>20</ColumnWidth0><ColumnWidth1>1861</ColumnWidth1><PreferedWindows><Position>3</Position><ScreenPosX>0</ScreenPosX><ScreenPosY>0</ScreenPosY><Windows><Window><Factory>Build</Factory></Window><Window><Factory>Find-All-Declarations</Factory></Window></Windows></PreferedWindows></Debug-Log>
+      <TerminalIO/>
+    <Select-Ambiguous-Definitions><ColumnWidth0>664</ColumnWidth0><ColumnWidth1>94</ColumnWidth1><ColumnWidth2>1138</ColumnWidth2></Select-Ambiguous-Definitions><Find-All-Declarations><ColumnWidth0>664</ColumnWidth0><ColumnWidth1>94</ColumnWidth1><ColumnWidth2>1138</ColumnWidth2><PreferedWindows><Position>3</Position><ScreenPosX>0</ScreenPosX><ScreenPosY>0</ScreenPosY><Windows><Window><Factory>Build</Factory></Window><Window><Factory>Debug-Log</Factory></Window></Windows></PreferedWindows></Find-All-Declarations><PROJECT_GUI_CALL_GRAPH><col-names><item>File</item><item>Function</item><item>Line</item></col-names><col-widths><item>200</item><item>700</item><item>113</item></col-widths><PreferedWindows><Position>3</Position><ScreenPosX>0</ScreenPosX><ScreenPosY>0</ScreenPosY><Windows/></PreferedWindows></PROJECT_GUI_CALL_GRAPH></Static>
+    <Windows>
+      
+      
+    <Wnd0>
+        <Tabs>
+          <Tab>
+            <Identity>TabID-32656-18089</Identity>
+            <TabName>Workspace</TabName>
+            <Factory>Workspace</Factory>
+            <Session>
+              
+            <NodeDict><ExpandedNode>Escout-4U</ExpandedNode><ExpandedNode>Escout-4U/src</ExpandedNode></NodeDict></Session>
+          </Tab>
+        </Tabs>
+        
+      <SelectedTab>0</SelectedTab></Wnd0><Wnd1><Tabs><Tab><Identity>TabID-30887-5056</Identity><TabName>Build</TabName><Factory>Build</Factory><Session/></Tab></Tabs><SelectedTab>0</SelectedTab></Wnd1></Windows>
+    <Editor>
+      
+      
+      
+      
+    <Pane><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\main.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>108</YPos2><SelStart2>4161</SelStart2><SelEnd2>4161</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\wifi.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>0</YPos2><SelStart2>930</SelStart2><SelEnd2>930</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\detector.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>45</YPos2><SelStart2>1813</SelStart2><SelEnd2>1813</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\store.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>623</YPos2><SelStart2>12995</SelStart2><SelEnd2>12995</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\CC1101.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>483</YPos2><SelStart2>20059</SelStart2><SelEnd2>20059</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\inc\detector.h</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>0</YPos2><SelStart2>254</SelStart2><SelEnd2>254</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\KEY_LED.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>19</YPos2><SelStart2>425</SelStart2><SelEnd2>425</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\Libraries\STM32F10x_StdPeriph_Driver\inc\stm32f10x_gpio.h</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>53</YPos2><SelStart2>2531</SelStart2><SelEnd2>2531</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\temp-humi.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>369</YPos2><SelStart2>11520</SelStart2><SelEnd2>11520</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\usart.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>982</YPos2><SelStart2>28572</SelStart2><SelEnd2>28572</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\src\timer.c</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>167</YPos2><SelStart2>2968</SelStart2><SelEnd2>2968</SelEnd2></Tab><Tab><Factory>TextEditor</Factory><Filename>$WS_DIR$\..\inc\store.h</Filename><XPos>0</XPos><YPos>0</YPos><SelStart>0</SelStart><SelEnd>0</SelEnd><XPos2>0</XPos2><YPos2>0</YPos2><SelStart2>974</SelStart2><SelEnd2>974</SelEnd2></Tab><ActiveTab>11</ActiveTab></Pane><ActivePane>0</ActivePane><Sizes><Pane><X>1000000</X><Y>1000000</Y></Pane></Sizes><SplitMode>1</SplitMode></Editor>
+    <Positions>
+      
+      
+      
+      
+      
+    <Top><Row0><Sizes><Toolbar-00CE4C28><key>iaridepm.enu1</key></Toolbar-00CE4C28></Sizes></Row0></Top><Left><Row0><Sizes><Wnd0><Rect><Top>-2</Top><Left>-2</Left><Bottom>1094</Bottom><Right>354</Right><x>-2</x><y>-2</y><xscreen>197</xscreen><yscreen>189</yscreen><sizeHorzCX>76953</sizeHorzCX><sizeHorzCY>141045</sizeHorzCY><sizeVertCX>139063</sizeVertCX><sizeVertCY>817910</sizeVertCY></Rect></Wnd0></Sizes></Row0></Left><Right><Row0><Sizes/></Row0></Right><Bottom><Row0><Sizes><Wnd1><Rect><Top>-2</Top><Left>-2</Left><Bottom>198</Bottom><Right>2562</Right><x>-2</x><y>-2</y><xscreen>2564</xscreen><yscreen>200</yscreen><sizeHorzCX>1001562</sizeHorzCX><sizeHorzCY>149254</sizeHorzCY><sizeVertCX>78125</sizeVertCX><sizeVertCY>149254</sizeVertCY></Rect></Wnd1></Sizes></Row0></Bottom><Float><Sizes/></Float></Positions>
+  </Desktop>
+</Workspace>
+
+

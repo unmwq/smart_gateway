@@ -1,0 +1,237 @@
+[Stack]
+FillEnabled=0
+OverflowWarningsEnabled=1
+WarningThreshold=90
+SpWarningsEnabled=1
+WarnLogOnly=1
+UseTrigger=1
+TriggerName=main
+LimitSize=0
+ByteLimit=50
+[Interrupts]
+Enabled=1
+[MemConfig]
+Base=1
+Manual=0
+Ddf=1
+TypeViol=0
+Stop=1
+[Simulator]
+Freq=10000000
+MultiCoreRunAll=1
+[JLinkDriver]
+CStepIntDis=_ 0
+[DebugChecksum]
+Checksum=-1647427734
+[Exceptions]
+StopOnUncaught=_ 0
+StopOnThrow=_ 0
+[CallStack]
+ShowArgs=0
+[Disassembly]
+MixedMode=1
+[SWOTraceHWSettings]
+OverrideDefaultClocks=0
+CpuClock=72000000
+ClockAutoDetect=0
+ClockWanted=2000000
+JtagSpeed=2000000
+Prescaler=36
+TimeStampPrescIndex=0
+TimeStampPrescData=0
+PcSampCYCTAP=1
+PcSampPOSTCNT=15
+PcSampIndex=0
+DataLogMode=0
+ITMportsEnable=0
+ITMportsTermIO=0
+ITMportsLogFile=0
+ITMlogFile=$PROJ_DIR$\ITM.log
+[RecentFlashDownload]
+Path=E:\433_wifi_pro\EWARM\Debug\Exe\Escout-4U.out
+[struct_types]
+Fmt0=STOR_433_DATA-Count_433	2	0
+Fmt1=TX_Time_433-High_Time	4	0
+Fmt2=TX_Time_433-Low_Time	4	0
+Fmt3=TX_Time_433-Syno_Time	4	0
+Fmt4=WIFI_INFO-voice_flags	4	0
+Fmt5=_calendar_obj-w_year	4	0
+[array_types]
+Fmt0=char[50]	4	0
+Fmt1=u8[100]	4	0
+Fmt2=u8[1020]	4	0
+Fmt3=u8[1024]	4	0
+Fmt4=u8[10]	4	0
+Fmt5=u8[1200]	4	0
+Fmt6=u8[1220]	4	0
+Fmt7=u8[12]	4	0
+Fmt8=u8[20]	4	0
+Fmt9=u8[250]	4	0
+Fmt10=u8[2]	4	0
+Fmt11=u8[300]	4	0
+Fmt12=u8[30]	4	0
+Fmt13=u8[3]	4	0
+Fmt14=u8[400]	4	0
+Fmt15=u8[4096]	4	0
+Fmt16=u8[4]	4	0
+Fmt17=u8[5000]	4	0
+Fmt18=u8[512]	4	0
+Fmt19=u8[520]	4	0
+Fmt20=u8[5]	4	0
+Fmt21=u8[60]	4	0
+Fmt22=u8[6]	4	0
+Fmt23=u8[8]	4	0
+Fmt24=uint8[10]	4	0
+Fmt25=uint8[20]	4	0
+Fmt26=uint8[3]	4	0
+Fmt27=uint8[5]	4	0
+Fmt28=uint8[60]	4	0
+Fmt29=uint8[6]	4	0
+[watch_formats]
+Fmt0={W}0:checksum	4	0
+Fmt1={W}0:humi_val_real	4	0
+Fmt2={W}0:humidity	3	0
+Fmt3={W}0:temp_val_real	4	0
+Fmt4={W}0:val	4	0
+[SWOTraceWindow]
+PcSampling=0
+InterruptLogs=0
+ForcedTimeStamps=0
+EventCPI=0
+EventEXC=0
+EventFOLD=0
+EventLSU=0
+EventSLEEP=0
+[PowerLog]
+LogEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=0
+Title_0=I0
+Symbol_0=0 4 1
+LiveEnabled=0
+LiveFile=PowerLogLive.log
+[DataLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+Title_0=arlrm_calling
+Symbol_0=0 4 1
+Title_1=handly_get_value
+Symbol_1=0 4 1
+[EventLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+SumSortOrder=0
+[InterruptLog]
+LogEnabled=0
+SumEnabled=0
+GraphEnabled=0
+ShowTimeLog=1
+ShowTimeSum=1
+SumSortOrder=0
+[Log file]
+LoggingEnabled=_ 0
+LogFile=_ ""
+Category=_ 0
+[TermIOLog]
+LoggingEnabled=_ 0
+LogFile=_ ""
+[CallStackLog]
+Enabled=0
+[PowerProbe]
+Frequency=10000
+Probe0=I0
+ProbeSetup0=2 1 1 2 0 0
+[DriverProfiling]
+Enabled=0
+Mode=3
+Graph=0
+Symbiont=0
+Exclusions=
+[Disassemble mode]
+mode=0
+[Breakpoints2]
+Bp0=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\gprs.c}.25.1" 0 0 1 "" 0 "" 0
+Bp1=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\stm32f10x_it.c}.70.3" 0 0 1 "" 0 "" 0
+Bp2=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\KEY_LED.c}.98.1" 0 0 1 "" 0 "" 0
+Bp3=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\..\wifi_jxe\EWARM}.233.5" 0 0 1 "" 0 "" 0
+Bp4=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src}.274.1" 0 0 1 "" 0 "" 0
+Bp5=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\..\wifi_jxe\EWARM}.761.19" 0 0 1 "" 0 "" 0
+Bp6=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.4778.1" 0 0 1 "" 0 "" 0
+Bp7=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.4778.1" 0 0 1 "" 0 "" 0
+Bp8=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.4767.1" 0 0 1 "" 0 "" 0
+Bp9=_ 1 "EMUL_DATA_LOG" "arlrm_calling" 0 0
+Bp10=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\store.c}.37.7" 0 0 1 "" 0 "" 0
+Bp11=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\store.c}.46.5" 0 0 1 "" 0 "" 0
+Bp12=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.1018.3" 0 0 1 "" 0 "" 0
+Bp13=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.966.7" 0 0 1 "" 0 "" 0
+Bp14=_ 0 "EMUL_DATA" "handly_mode_time" 0 0 0 0 4294967295
+Bp15=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\adc_ts.c}.295.1" 0 0 1 "" 0 "" 0
+Bp16=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\adc_ts.c}.295.1" 0 0 1 "" 0 "" 0
+Bp17=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\adc_ts.c}.295.1" 0 0 1 "" 0 "" 0
+Bp18=_ 0 "EMUL_CODE" "{$PROJ_DIR$\..\src\adc_ts.c}.291.2" 0 0 1 "" 0 "" 0
+Bp19=_ 0 "EMUL_CODE" "{$PROJ_DIR$}.146.3" 0 0 1 "" 0 "" 0
+Bp20=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.1620.3" 0 0 1 "" 0 "" 0
+Bp21=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.2795.9" 0 0 1 "" 0 "" 0
+Bp22=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.731.5" 0 0 1 "" 0 "" 0
+Bp23=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3539.9" 0 0 1 "" 0 "" 0
+Bp24=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3549.1" 0 0 1 "" 0 "" 0
+Bp25=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3549.11" 0 0 1 "" 0 "" 0
+Bp26=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3562.11" 0 0 1 "" 0 "" 0
+Bp27=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3572.11" 0 0 1 "" 0 "" 0
+Bp28=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3582.11" 0 0 1 "" 0 "" 0
+Bp29=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3592.11" 0 0 1 "" 0 "" 0
+Bp30=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.3604.11" 0 0 1 "" 0 "" 0
+Bp31=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.735.7" 0 0 1 "" 0 "" 0
+Bp32=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\detector.c}.4503.3" 0 0 1 "" 0 "" 0
+Bp33=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.867.7" 0 0 1 "" 0 "" 0
+Bp34=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.821.7" 0 0 1 "" 0 "" 0
+Bp35=_ 1 "EMUL_CODE" "{$PROJ_DIR$\..\src\wifi.c}.843.9" 0 0 1 "" 0 "" 0
+Count=36
+[Aliases]
+A0=_ "C:\Documents and Settings\Administrator\桌面\Escout_4U 2015-1-4\src\main.c" ""
+A1=_ "C:\Documents and Settings\Administrator\桌面\Escout_4U 2015-1-7\src\main.c" ""
+A2=_ "C:\Documents and Settings\Administrator\桌面\SHEXT2014-11-10\src\main.c" ""
+A3=_ "C:\Documents and Settings\Administrator\桌面\camera 2014-12-16\src\main.c" "C:\Documents and Settings\Administrator\桌面\camera 2014-12-17\src\main.c"
+A4=_ "C:\Documents and Settings\Administrator\桌面\camera 2014-12-17\src\main.c" ""
+A5=_ "C:\Documents and Settings\Administrator\桌面\camera 2014-12-1\src\main.c" ""
+A6=_ "C:\Documents and Settings\Administrator\桌面\异常处理2014-11-10\src\sys.c" "C:\Documents and Settings\Administrator\桌面\新建文件夹 (2)\误报处理2014-11-10\src\sys.c"
+A7=_ "C:\Documents and Settings\Administrator\桌面\异常处理2014-11-5\Libraries\STM32F10x_StdPeriph_Driver\src\stm32f10x_flash.c" ""
+A8=_ "C:\Documents and Settings\Administrator\桌面\异常处理2014-11-5\src\err.c" ""
+A9=_ "C:\Documents and Settings\Administrator\桌面\异常处理2014-11-5\src\main.c" ""
+A10=_ "C:\Documents and Settings\Administrator\桌面\异常处理2014-11-5\src\sys.c" ""
+A11=_ "C:\Users\Administrator\Desktop\433_WIFI_IR\src\delay.c" ""
+A12=_ "C:\Users\Administrator\Desktop\433_WIFI_IR\src\iwdg.c" ""
+A13=_ "C:\Users\Administrator\Desktop\433_WIFI_IR\src\main.c" ""
+A14=_ "C:\Users\Administrator\Desktop\433_WIFI_IR\src\usart.c" ""
+A15=_ "C:\Users\Administrator\Desktop\Escout_4U 2015-2-11\等待语音版本Escout_4U 2015-2-11\Libraries\STM32F10x_StdPeriph_Driver\src\stm32f10x_tim.c" ""
+A16=_ "C:\Users\Administrator\Desktop\Escout_4U 2015-2-11\等待语音版本Escout_4U 2015-2-11\src\main.c" "C:\Users\win 7\Desktop\Escout_4U 2015-2-28\等待语音版本Escout_4U 2015-2-11\src\main.c"
+A17=_ "C:\Users\jhj\Desktop\Escout_4U 2014-12-29\Libraries\CMSIS\CM3\DeviceSupport\ST\STM32F10x\system_stm32f10x.c" ""
+A18=_ "C:\Users\jhj\Desktop\Escout_4U 2014-12-29\src\main.c" "C:\Documents and Settings\Administrator\桌面\Escout_4U 2015-1-4\src\main.c"
+A19=_ "C:\Users\jhj\Desktop\Escout_4U 2014-12-29\src\stm32f10x_it.c" ""
+A20=_ "C:\Users\jhj\Desktop\Escout_4U 2014-12-29\src\sys.c" ""
+A21=_ "C:\Users\win 7\Desktop\2015-3-19休眠版本\等待语音版本Escout_4U 2015-2-11\Libraries\STM32F10x_StdPeriph_Driver\src\stm32f10x_tim.c" ""
+A22=_ "C:\Users\win 7\Desktop\wifi_carmear_5-29\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A23=_ "C:\Users\win 7\Desktop\wifi_carmear_5-29\src\main.c" ""
+A24=_ "C:\Users\win 7\Desktop\wifi_gsm_carmear_5-14\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A25=_ "C:\Users\win 7\Desktop\wifi_gsm_carmear_5-14\src\main.c" ""
+A26=_ "C:\Users\win 7\Desktop\wifi_gsm_carmear_5-20\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A27=_ "C:\Users\win 7\Desktop\wifi_gsm_carmear_5-20\src\main.c" ""
+A28=_ "E:\433_wifi_pro - 副本\src\iwdg.c" ""
+A29=_ "E:\433_wifi_pro - 副本\src\main.c" ""
+A30=_ "E:\433_wifi_pro_AXK_7.22\src\iwdg.c" ""
+A31=_ "E:\433_wifi_pro_AXK_7.22\src\main.c" ""
+A32=_ "E:\chenquan\company\iar\backup\WIFI&Carmear\wifi_carmear_7-13\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A33=_ "E:\chenquan\company\iar\backup\WIFI&Carmear\wifi_carmear_7-13\src\main.c" ""
+A34=_ "E:\chenquan\work\iar\backup\wifi_gsm_carmear_5-22\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A35=_ "E:\chenquan\work\iar\code\WIFI&GSM&Carmear\wifi_carmear_6-3\Libraries\STM32F10x_StdPeriph_Driver\src\misc.c" ""
+A36=_ "E:\chenquan\work\iar\code\WIFI&GSM&Carmear\wifi_carmear_6-3\src\main.c" ""
+A37=_ "E:\work\iar\Escout_4U 2015-1-4\src\main.c" ""
+Count=38
+SuppressDialog=0
