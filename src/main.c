@@ -119,6 +119,7 @@ void Get_ID_formflash()
 int main (void)
 { 
   u16 th;
+  u16 sum;
   
   //存放命令等需要发送的内容，可放在全局区
   // u8 sztmp[50];
